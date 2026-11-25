@@ -1,0 +1,110 @@
+services:
+  mysql:
+    image: mysql:8.0
+    container_name: agent-wokplat-mysql
+    restart: unless-stopped
+    environment:
+      MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD}
+      MYSQL_DATABASE: ${MYSQL_DATABASE}
+      MYSQL_APP_PASSWORD: ${MYSQL_APP_PASSWORD}
+    ports:
+      - "${MYSQL_PORT:-23307}:3306"
+    volumes:
+      - mysql_data:/var/lib/mysql
+      - ./backend/docker/mysql-init:/docker-entrypoint-initdb.d:ro
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "127.0.0.1", "-uroot", "-p${MYSQL_ROOT_PASSWORD}"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+
+  qdrant:
+    image: qdrant/qdrant:latest
+    container_name: agent-wokplat-qdrant
+    restart: unless-stopped
+    ports:
+      - "${QDRANT_PORT:-26334}:6333"
+    volumes:
+      - qdrant_data:/qdrant/storage
+    healthcheck:
+      test: ["CMD-SHELL", "bash -c ':> /dev/tcp/127.0.0.1/6333' || exit 1"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+
+  model-service:
+    build:
+      context: ./model-service
+    container_name: agent-wokplat-model
+    restart: unless-stopped
+    environment:
+      PORT: 8090
+      EMBED_MODEL: /models/bge-m3
+      RERANK_MODEL: /models/bge-reranker-large
+    volumes:
+      # 宿主机本地 ONNX 模型目录映射到容器（只读）
+      - ${MODEL_DIR:-D:/EmbedingModel}:/models:ro
+    healthcheck:
+      test: ["CMD-SHELL", "node -e \"require('http').get('http://127.0.0.1:8090/health',r=>process.exit(r.statusCode===200?0:1)).on('error',()=>process.exit(1))\""]
+      interval: 10s
+      timeout: 5s
+      retries: 30
+      start_period: 60s
+
+  api:
+    build:
+      context: ./backend
+    container_name: agent-wokplat-api
+    restart: unless-stopped
+    depends_on:
+      mysql:
+        condition: service_healthy
+      qdrant:
+        condition: service_healthy
+      model-service:
+        condition: service_healthy
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    environment:
+      AWS_MYSQL_HOST: mysql
+      AWS_MYSQL_PORT: 3306
+      AWS_MYSQL_DB: ${MYSQL_DATABASE}
+      AWS_MYSQL_USER: aws_app
+      AWS_MYSQL_PASSWORD: ${MYSQL_APP_PASSWORD}
+      AWS_QDRANT_HOST: qdrant
+      AWS_QDRANT_PORT: 6333
+      AWS_ANTHROPIC_BASE_URL: ${ANTHROPIC_BASE_URL}
+      AWS_ANTHROPIC_AUTH_TOKEN: ${ANTHROPIC_AUTH_TOKEN}
+      AWS_ANTHROPIC_MODEL: ${ANTHROPIC_MODEL:-MiniMax-M2.5}
+      AWS_EMBEDDING_PROVIDER: ${EMBEDDING_PROVIDER}
+      AWS_EMBEDDING_DIM: ${EMBEDDING_DIM}
+      AWS_EMBEDDING_API_BASE: ${EMBEDDING_API_BASE}
+      AWS_EMBEDDING_MODEL: ${EMBEDDING_MODEL}
+      AWS_RERANK_PROVIDER: ${RERANK_PROVIDER}
+      AWS_RERANK_API_BASE: ${RERANK_API_BASE}
+      AWS_RERANK_MODEL: ${RERANK_MODEL}
+      AWS_RAG_TOP_K: ${RAG_TOP_K:-5}
+      AWS_RAG_SCORE_THRESHOLD: ${RAG_SCORE_THRESHOLD:-0.5}
+      AWS_RAG_HYBRID_K: ${RAG_HYBRID_K:-20}
+      AWS_RAG_RRF_K: ${RAG_RRF_K:-60}
+      AWS_A2A_PUBLIC_BASE_URL: ${AWS_A2A_PUBLIC_BASE_URL:-}
+      DSH_HOME: /dsh-home
+    ports:
+      - "${API_PORT:-8900}:8000"
+    volumes:
+      - ./backend:/srv/app
+      # 用户可直接访问的项目目录：Skill 与插件就放在这里
+      - ./skills:/srv/data/artifacts/skills
+      - ./plugins:/srv/data/artifacts/plugins
+      - ./agents:/srv/data/artifacts/agents
+      - ./mcp:/srv/data/artifacts/mcp
+      # 导出的 DSH bundle 放在项目根目录 dsh-exports/，用户可直接找到
+      - ./dsh-exports:/srv/app/dsh-exports
+      # DSH_HOME 映射：导出的插件/Skill 直接落到本机 DSH 目录
+      - ${DSH_HOME:-E:/DevCache/dsh}:/dsh-home
+    command: uvicorn app.main:app --host 0.0.0.0 --port 8000
+
+volumes:
+  mysql_data:
+  qdrant_data:
+  artifacts_data:

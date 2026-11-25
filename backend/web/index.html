@@ -1,0 +1,2284 @@
+<!DOCTYPE html>
+<html lang="zh-CN" data-theme="dark">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Agent 工作系统</title>
+<style>
+/* ── 主题变量：黑白切换 ── */
+:root[data-theme="dark"] {
+  --bg:#0f1117; --bg2:#12151d; --panel:#171a23; --panel2:#1d2230;
+  --line:#262b38; --fg:#e6e9f0; --fg2:#aab2c5; --dim:#7d8598;
+  --acc:#5b8cff; --acc-soft:rgba(91,140,255,.12); --ok:#3fb96f; --ok-soft:rgba(63,185,111,.12);
+  --bad:#e05666; --bad-soft:rgba(224,86,102,.12); --warn:#d9a53f;
+  --shadow:0 1px 3px rgba(0,0,0,.4);
+}
+:root[data-theme="light"] {
+  --bg:#f4f6fa; --bg2:#eef1f6; --panel:#ffffff; --panel2:#f0f3f9;
+  --line:#dfe4ee; --fg:#1a2233; --fg2:#3d4759; --dim:#8a93a6;
+  --acc:#3565d9; --acc-soft:rgba(53,101,217,.08); --ok:#1e8e4e; --ok-soft:rgba(30,142,78,.08);
+  --bad:#cc3d4d; --bad-soft:rgba(204,61,77,.08); --warn:#b07d1a;
+  --shadow:0 1px 3px rgba(20,30,60,.08);
+}
+* { box-sizing:border-box; margin:0; }
+/* 滚动条：与主体色一致，不突兀 */
+* { scrollbar-width:thin; scrollbar-color:var(--line) transparent; }
+::-webkit-scrollbar { width:8px; height:8px; }
+::-webkit-scrollbar-track { background:transparent; }
+::-webkit-scrollbar-thumb { background:var(--line); border-radius:8px; border:2px solid transparent; background-clip:padding-box; }
+::-webkit-scrollbar-thumb:hover { background:var(--dim); background-clip:padding-box; }
+::-webkit-scrollbar-corner { background:transparent; }
+html, body { height:100%; }
+body { background:var(--bg); color:var(--fg); font:14px/1.6 "Segoe UI",system-ui,-apple-system,sans-serif; display:flex; flex-direction:column; }
+
+/* ── 顶栏 ── */
+header { height:52px; background:var(--panel); border-bottom:1px solid var(--line); display:flex; align-items:center; padding:0 20px; gap:14px; flex-shrink:0; }
+header .logo { width:26px; height:26px; border-radius:7px; background:linear-gradient(135deg,var(--acc),#8a5bff); display:flex; align-items:center; justify-content:center; color:#fff; font-weight:700; font-size:13px; }
+header h1 { font-size:15px; font-weight:600; }
+header .spacer { flex:1; }
+.hbtn { background:none; border:1px solid var(--line); color:var(--fg2); border-radius:8px; padding:6px 12px; cursor:pointer; font:inherit; font-size:13px; display:flex; align-items:center; gap:6px; }
+.hbtn:hover { border-color:var(--acc); color:var(--acc); }
+
+/* ── 布局：侧栏 + 主区 ── */
+.wrap { flex:1; display:flex; min-height:0; }
+nav { width:200px; background:var(--panel); border-right:1px solid var(--line); padding:14px 10px; flex-shrink:0; display:flex; flex-direction:column; gap:2px; }
+nav .nav-sec { font-size:11px; color:var(--dim); padding:10px 12px 4px; letter-spacing:.06em; }
+nav button { display:flex; align-items:center; gap:10px; width:100%; text-align:left; padding:9px 12px; background:none; border:none; border-radius:8px; color:var(--fg2); cursor:pointer; font:inherit; font-size:13.5px; }
+nav button:hover { background:var(--panel2); color:var(--fg); }
+nav button.on { background:var(--acc-soft); color:var(--acc); font-weight:600; }
+nav button .ic { width:18px; text-align:center; }
+main { flex:1; overflow-y:auto; padding:26px 34px; min-width:0; }
+main .inner { max-width:1080px; margin:0 auto; }
+
+h2.vtitle { font-size:19px; font-weight:650; margin-bottom:4px; }
+.vsub { color:var(--dim); font-size:13px; margin-bottom:22px; }
+h3.sect { font-size:14px; font-weight:600; margin:22px 0 10px; color:var(--fg2); }
+
+.card { background:var(--panel); border:1px solid var(--line); border-radius:10px; padding:16px 18px; margin-bottom:12px; box-shadow:var(--shadow); }
+.card .t { font-weight:600; font-size:14px; display:flex; align-items:center; gap:8px; }
+.card .d { color:var(--fg2); font-size:13px; margin-top:3px; }
+.grid2 { display:grid; grid-template-columns:1fr 1fr; gap:12px; }
+
+.tag { display:inline-flex; align-items:center; background:var(--panel2); color:var(--fg2); border-radius:5px; padding:1px 8px; font-size:11px; line-height:1.7; }
+.tag.acc { background:var(--acc-soft); color:var(--acc); }
+.tag.ok { background:var(--ok-soft); color:var(--ok); }
+.tag.bad { background:var(--bad-soft); color:var(--bad); }
+.tag.warn { background:rgba(217,165,63,.12); color:var(--warn); }
+
+.row { display:flex; gap:10px; margin-bottom:10px; flex-wrap:wrap; align-items:center; }
+label.f { display:block; font-size:12px; color:var(--dim); margin:10px 0 4px; }
+input,textarea,select { background:var(--bg2); border:1px solid var(--line); color:var(--fg); border-radius:8px; padding:8px 11px; font:inherit; font-size:13.5px; outline:none; transition:border-color .15s; }
+/* 分块参数输入框：透明背景 */
+.param-input { width:110px; background:transparent; }
+.param-input:hover { border-color:var(--fg2); }
+.param-input:focus { border-color:var(--acc); background:transparent; }
+/* 数字调节箭头：背景透明，保留浏览器原生可点击的上下调节 */
+.param-input { color-scheme: light dark; }
+.param-input::-webkit-inner-spin-button,
+.param-input::-webkit-outer-spin-button {
+  background: transparent;
+  opacity: 0.55;
+  cursor: pointer;
+}
+.param-input::-webkit-inner-spin-button:hover,
+.param-input::-webkit-outer-spin-button:hover { opacity: 1; }
+input:focus,textarea:focus,select:focus { border-color:var(--acc); }
+textarea { width:100%; min-height:74px; resize:vertical; }
+button.act { background:var(--acc); border:none; color:#fff; border-radius:8px; padding:8px 16px; cursor:pointer; font:inherit; font-size:13.5px; font-weight:500; }
+button.act:hover { filter:brightness(1.1); }
+button.act:disabled { opacity:.45; cursor:not-allowed; }
+button.ghost { background:none; border:1px solid var(--line); color:var(--fg2); border-radius:8px; padding:7px 14px; cursor:pointer; font:inherit; font-size:13px; }
+button.ghost:hover { border-color:var(--acc); color:var(--acc); }
+button.danger { background:var(--bad-soft); color:var(--bad); border:none; border-radius:8px; padding:7px 14px; cursor:pointer; font:inherit; font-size:13px; }
+
+pre { background:var(--bg2); border:1px solid var(--line); border-radius:8px; padding:11px 13px; overflow:auto; font-size:12px; line-height:1.55; white-space:pre-wrap; max-height:340px; color:var(--fg2); }
+table { width:100%; border-collapse:collapse; font-size:12.5px; }
+th,td { text-align:left; padding:7px 10px; border-bottom:1px solid var(--line); }
+th { color:var(--dim); font-weight:500; font-size:11.5px; letter-spacing:.03em; }
+.empty { text-align:center; color:var(--dim); padding:36px 0; font-size:13px; border:1px dashed var(--line); border-radius:10px; }
+.msg { padding:9px 13px; border-radius:8px; font-size:13px; margin:8px 0; }
+.msg.ok { background:var(--ok-soft); color:var(--ok); border:1px solid transparent; }
+.msg.bad { background:var(--bad-soft); color:var(--bad); }
+.hidden { display:none !important; }
+
+/* ── 自定义弹框（替代浏览器 alert/confirm/prompt）── */
+.modal-mask { position:fixed; inset:0; background:rgba(0,0,0,.5); display:flex; align-items:center; justify-content:center; z-index:9999; }
+.modal { background:var(--panel); border:1px solid var(--line); border-radius:12px; padding:20px 22px; width:360px; max-width:90vw; box-shadow:0 12px 40px rgba(0,0,0,.35); }
+.modal .mt { font-size:15px; font-weight:600; margin-bottom:10px; }
+.modal .md { font-size:13px; color:var(--fg2); line-height:1.6; margin-bottom:16px; }
+.modal input { width:100%; }
+.modal .mb { display:flex; justify-content:flex-end; gap:8px; margin-top:16px; }
+.spin { display:inline-block; width:14px; height:14px; border:2px solid var(--line); border-top-color:var(--acc); border-radius:50%; animation:sp .7s linear infinite; vertical-align:-2px; }
+@keyframes sp { to { transform:rotate(360deg); } }
+
+/* ── 聊天式 Skill 创作 ── */
+.chat-shell { display:flex; flex-direction:column; height:560px; background:var(--panel); border:1px solid var(--line); border-radius:12px; overflow:hidden; box-shadow:var(--shadow); }
+/* Playground：聊天框占满页面剩余高度 */
+.pg-page { display:flex; flex-direction:column; height:calc(100vh - 92px); }
+.pg-title { flex-shrink:0; margin-bottom:10px; }
+.pg-shell { flex:1; height:auto; min-height:0; }
+.pg-trace-wrap { flex-shrink:0; max-height:170px; overflow-y:auto; padding:0 16px 8px; }
+.pg-trace-wrap .sect { margin:8px 0 6px; }
+.pg-trace-wrap table { font-size:11.5px; }
+.chat-head { padding:12px 18px; border-bottom:1px solid var(--line); display:flex; align-items:center; gap:10px; background:var(--panel2); }
+.chat-head .dot { width:9px; height:9px; border-radius:50%; background:var(--ok); }
+.chat-head .who { font-weight:600; font-size:13.5px; }
+.chat-head .st { margin-left:auto; }
+.chat-body { flex:1; overflow-y:auto; padding:18px; display:flex; flex-direction:column; gap:12px; background:var(--bg2); }
+.bubble { max-width:78%; padding:10px 14px; border-radius:12px; font-size:13.5px; line-height:1.6; white-space:pre-wrap; word-break:break-word; }
+.bubble.ai { align-self:flex-start; background:var(--panel); border:1px solid var(--line); border-top-left-radius:4px; }
+.bubble.me { align-self:flex-end; background:var(--acc); color:#fff; border-top-right-radius:4px; }
+.draft-card { align-self:flex-start; max-width:86%; background:var(--panel); border:1px solid var(--acc); border-radius:12px; border-top-left-radius:4px; padding:14px 16px; font-size:13px; }
+.draft-card .dt { font-weight:600; color:var(--acc); margin-bottom:8px; font-size:13px; }
+.draft-card .kv { margin:3px 0; }
+.draft-card .kv b { color:var(--dim); font-weight:500; font-size:12px; margin-right:6px; }
+.chat-input { display:flex; gap:10px; padding:14px 16px; border-top:1px solid var(--line); background:var(--panel); }
+.chat-input textarea { flex:1; min-height:44px; max-height:120px; }
+.chat-actions { display:flex; gap:8px; align-items:flex-end; }
+
+.badge-state { font-size:11px; padding:2px 10px; border-radius:20px; }
+.badge-state.clarify { background:var(--acc-soft); color:var(--acc); }
+.badge-state.draft { background:rgba(217,165,63,.12); color:var(--warn); }
+.badge-state.submitted { background:var(--ok-soft); color:var(--ok); }
+
+/* ── 智能对话：会话列表 + 聊天区 ── */
+.chat-layout { display:flex; gap:0; height:calc(100vh - 92px); }
+.sess-side { width:250px; flex-shrink:0; background:var(--panel); border:1px solid var(--line); border-radius:12px 0 0 12px; display:flex; flex-direction:column; overflow:hidden; }
+.sess-head { padding:12px 14px; border-bottom:1px solid var(--line); display:flex; align-items:center; gap:8px; }
+.sess-head .t { font-size:13px; font-weight:600; flex:1; }
+.sess-new { width:30px; height:30px; border-radius:8px; border:1px solid var(--line); background:var(--panel2); color:var(--fg2); cursor:pointer; font-size:16px; display:flex; align-items:center; justify-content:center; }
+.sess-new:hover { border-color:var(--acc); color:var(--acc); }
+.sess-list { flex:1; overflow-y:auto; padding:6px; }
+.sess-item { padding:9px 11px; border-radius:8px; cursor:pointer; margin-bottom:3px; display:flex; align-items:center; gap:8px; }
+.sess-item:hover { background:var(--panel2); }
+.sess-item.on { background:var(--acc-soft); }
+.sess-item .st { flex:1; min-width:0; font-size:12.5px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; color:var(--fg2); }
+.sess-item.on .st { color:var(--acc); font-weight:600; }
+.sess-item .del { opacity:0; border:none; background:none; color:var(--dim); cursor:pointer; font-size:11px; padding:1px 4px; }
+.sess-item:hover .del { opacity:1; }
+.sess-item .del:hover { color:var(--bad); }
+/* 轻量提示浮层 */
+#quick-toast { position:fixed; top:16px; right:20px; z-index:9999; pointer-events:none; }
+.qt-item { padding:10px 16px; border-radius:8px; font-size:13px; background:var(--panel); border:1px solid var(--line); box-shadow:var(--shadow); max-width:420px; animation:qtIn .18s ease-out; }
+.qt-item.ok { border-left:3px solid var(--ok); }
+.qt-item.bad { border-left:3px solid var(--bad); }
+@keyframes qtIn { from { opacity:0; transform:translateY(-8px); } to { opacity:1; transform:translateY(0); } }
+
+/* 会话任务状态：转圈=执行中，绿点=已完成 */
+.sess-done { display:inline-block; width:8px; height:8px; border-radius:50%; background:var(--ok); flex-shrink:0; }
+.sess-status-empty { display:inline-block; width:8px; height:8px; flex-shrink:0; }
+.chat-main { flex:1; min-width:0; display:flex; flex-direction:column; background:var(--bg); border:1px solid var(--line); border-left:none; border-radius:0 12px 12px 0; overflow:hidden; }
+.chat-page { display:flex; flex-direction:column; height:100%; width:100%; max-width:none; margin:0; }
+.chat-scroll { flex:1; overflow-y:auto; padding:20px 4px 10px; }
+.welcome { text-align:center; padding:16vh 20px 20px; }
+.welcome .big { font-size:24px; font-weight:700; }
+.welcome .sub { color:var(--dim); margin:8px 0 26px; font-size:13px; }
+.welcome .sugg { display:grid; grid-template-columns:1fr 1fr; gap:10px; max-width:620px; margin:0 auto; text-align:left; }
+.welcome .sugg button { background:var(--panel); border:1px solid var(--line); border-radius:12px; padding:12px 15px; cursor:pointer; font:inherit; font-size:13px; color:var(--fg2); text-align:left; transition:border-color .15s; }
+.welcome .sugg button:hover { border-color:var(--acc); color:var(--fg); }
+
+/* 用户消息：右对齐气泡 */
+.turn.user { display:flex; justify-content:flex-end; margin:14px 0; }
+.turn.user .bubble { background:var(--acc); color:#fff; border-radius:16px 16px 4px 16px; padding:9px 14px; max-width:78%; font-size:14px; line-height:1.65; white-space:pre-wrap; word-break:break-word; }
+
+/* AI 回答：左侧正文流，无气泡 */
+.turn.ai { margin:20px 0; }
+.turn.ai .content { font-size:14.5px; line-height:1.8; white-space:pre-wrap; word-break:break-word; color:var(--fg); }
+.turn.ai .content p { margin: 0 0 .6em; }
+
+/* 思考：一条细线摘要，点击展开（回答完成后收起为摘要） */
+.think { margin:2px 0 10px; }
+.think > summary { cursor:pointer; color:var(--dim); font-size:12.5px; user-select:none; list-style:none; display:flex; align-items:center; gap:8px; }
+.think > summary::-webkit-details-marker { display:none; }
+.think > summary .line { flex:1; height:1px; background:var(--line); }
+.think > summary:hover { color:var(--fg2); }
+.think > summary .caret { transition:transform .15s; display:inline-block; font-size:10px; }
+.think[open] > summary .caret { transform:rotate(90deg); }
+.think[open] > summary { color:var(--fg2); }
+.think .think-body { margin-top:8px; padding:2px 2px 6px; font-size:12.5px; line-height:1.7; color:var(--dim); white-space:pre-wrap; }
+.think.live > summary .label { color:var(--acc); }
+
+/* 委托轨迹：一行内联小字 */
+.deli { margin:6px 0; font-size:12px; color:var(--dim); display:flex; align-items:center; gap:6px; flex-wrap:wrap; }
+.deli b { color:var(--fg2); }
+
+/* 流式光标 */
+.cursor { display:inline-block; width:7px; height:15px; background:var(--acc); vertical-align:-2px; margin-left:2px; animation:blink 1s steps(1) infinite; border-radius:1px; }
+@keyframes blink { 50% { opacity:0; } }
+
+/* 底部输入区：居中悬浮 */
+.composer-wrap { flex-shrink:0; padding:10px 0 6px; }
+.composer { background:var(--panel); border:1px solid var(--line); border-radius:20px; padding:12px 14px; display:flex; gap:12px; align-items:flex-end; box-shadow:var(--shadow); transition:border-color .15s; }
+.composer:focus-within { border-color:var(--acc); }
+.composer textarea { flex:1; background:none; border:none; color:var(--fg); resize:none; min-height:24px; max-height:160px; padding:2px 4px; font-size:14.5px; outline:none; font-family:inherit; }
+.composer .send { width:34px; height:34px; border-radius:10px; border:none; background:var(--acc); color:#fff; cursor:pointer; font-size:14px; display:flex; align-items:center; justify-content:center; flex-shrink:0; transition:opacity .15s; }
+.composer .send:disabled { opacity:.35; cursor:not-allowed; }
+.composer .send.stop { background:var(--bad); }
+.chat-foot { text-align:center; font-size:11px; color:var(--dim); padding:6px 0 2px; }
+
+/* ── 待发消息队列 ── */
+.send-queue { flex-shrink:0; padding:6px 4px 0; }
+.send-queue .q-head { display:flex; align-items:center; gap:8px; font-size:11.5px; color:var(--dim); margin-bottom:5px; }
+.send-queue .q-head .clear { margin-left:auto; border:none; background:none; color:var(--dim); cursor:pointer; font-size:11px; }
+.send-queue .q-head .clear:hover { color:var(--bad); }
+.q-list { display:flex; flex-direction:column; gap:4px; max-height:140px; overflow-y:auto; }
+.q-item { display:flex; align-items:center; gap:8px; background:var(--panel); border:1px solid var(--line); border-radius:8px; padding:6px 10px; font-size:12.5px; }
+.q-item .qn { color:var(--dim); font-size:11px; flex-shrink:0; }
+.q-item .qt { flex:1; min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; color:var(--fg2); cursor:text; }
+.q-item input.qt { background:none; border:none; color:var(--fg); outline:none; padding:0; font:inherit; }
+.q-item .qop { border:none; background:none; color:var(--dim); cursor:pointer; font-size:11px; padding:2px 5px; border-radius:5px; }
+.q-item .qop:hover { background:var(--panel2); color:var(--fg); }
+.q-item .qop.del:hover { color:var(--bad); }
+
+/* ── 图标按钮 ── */
+.icon-btn { width:34px; height:34px; border-radius:50%; border:1.5px solid var(--line); background:transparent; color:var(--fg2); cursor:pointer; display:inline-flex; align-items:center; justify-content:center; flex-shrink:0; transition:all .15s; padding:0; }
+.icon-btn:hover { border-color:var(--acc); color:var(--acc); background:var(--acc-soft); }
+.icon-btn svg { width:17px; height:17px; }
+.icon-btn.trash:hover { border-color:var(--bad); color:var(--bad); background:var(--bad-soft); }
+
+/* 加载转圈 */
+@keyframes spin { to { transform: rotate(360deg); } }
+.spinner { display:inline-block; width:15px; height:15px; border:2px solid var(--line); border-top-color:var(--acc); border-radius:50%; animation:spin .7s linear infinite; vertical-align:middle; margin-right:6px; }
+.loading-box { display:flex; align-items:center; gap:4px; color:var(--acc); font-size:12.5px; padding:10px 0; }
+
+/* 已入库文档：Windows 资源管理器风格列表 */
+.file-explorer { border:1px solid var(--line); border-radius:8px; overflow:hidden; background:var(--panel); }
+.fe-head { display:grid; grid-template-columns:minmax(220px,2.2fr) 90px 130px 70px 150px 80px; gap:8px; padding:9px 14px; background:var(--panel2); border-bottom:1px solid var(--line); font-size:11.5px; font-weight:600; color:var(--dim); }
+.fe-row { display:grid; grid-template-columns:minmax(220px,2.2fr) 90px 130px 70px 150px 80px; gap:8px; padding:7px 14px; align-items:center; font-size:12.5px; border-bottom:1px solid var(--line); }
+.fe-row:last-child { border-bottom:none; }
+.fe-row:hover { background:var(--acc-soft); }
+.fe-name { display:flex; align-items:center; gap:9px; cursor:pointer; overflow:hidden; }
+.fe-name > span:last-child { white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+.fe-cell { color:var(--fg2); }
+.filetype { display:inline-flex; align-items:center; justify-content:center; width:30px; height:26px; border-radius:4px; font-size:9px; font-weight:700; color:#fff; flex-shrink:0; }
+.ft-pdf { background:#d9453d; } .ft-doc { background:#2b579a; } .ft-xls { background:#1e7145; }
+.ft-md { background:#4a4a4a; } .ft-json { background:#b8860b; } .ft-txt { background:#6b7280; }
+
+/* ── 插件市场卡片 ── */
+.pl-card { background:var(--panel); border:1px solid var(--line); border-radius:10px; padding:14px 16px; display:flex; flex-direction:column; gap:8px; transition:border-color .15s; }
+.pl-card:hover { border-color:var(--acc); }
+.pl-card.off { opacity:.62; }
+.pl-head { display:flex; align-items:center; gap:8px; }
+.pl-head .pn { font-weight:600; font-size:13.5px; flex:1; min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+.pl-desc { font-size:12px; color:var(--fg2); line-height:1.55; min-height:37px; }
+.pl-meta { display:flex; gap:6px; flex-wrap:wrap; font-size:11px; }
+.pl-foot { display:flex; align-items:center; gap:6px; padding-top:8px; border-top:1px solid var(--line); }
+/* 开关 */
+.switch { width:34px; height:19px; border-radius:20px; border:none; background:var(--line); position:relative; cursor:pointer; transition:background .15s; flex-shrink:0; }
+.switch::after { content:''; position:absolute; top:2px; left:2px; width:15px; height:15px; border-radius:50%; background:#fff; transition:transform .15s; }
+.switch.on { background:var(--acc); }
+.switch.on::after { transform:translateX(15px); }
+.pl-act { border:none; background:none; color:var(--dim); cursor:pointer; font-size:11.5px; padding:3px 6px; border-radius:5px; }
+.pl-act:hover { background:var(--panel2); color:var(--fg); }
+.pl-act.del:hover { color:var(--bad); }
+
+/* ── Agent 市场：下拉菜单 / 卡片 / 推荐 ── */
+.pick-menu { border:1px solid var(--line); border-radius:8px; background:var(--bg2); overflow:hidden; }
+.pick-menu input { width:100%; border:none; border-bottom:1px solid var(--line); border-radius:0; background:var(--panel); }
+.menu-list { max-height:150px; overflow-y:auto; }
+.menu-item { display:block; width:100%; text-align:left; background:none; border:none; color:var(--fg2); padding:7px 10px; cursor:pointer; font:inherit; font-size:12.5px; border-bottom:1px solid var(--line); }
+.menu-item:hover { background:var(--acc-soft); color:var(--acc); }
+.picked { display:flex; flex-wrap:wrap; gap:5px; margin-top:6px; min-height:22px; }
+.chip { display:inline-flex; align-items:center; gap:4px; background:var(--panel); border:1px solid var(--line); border-radius:14px; padding:3px 9px; font-size:11.5px; color:var(--fg2); cursor:pointer; }
+.chip:hover { border-color:var(--acc); }
+.chip.on { background:var(--acc-soft); border-color:var(--acc); color:var(--acc); }
+.chip button { background:none; border:none; color:inherit; cursor:pointer; font-size:13px; padding:0 2px; }
+.recommend { margin-top:8px; display:flex; flex-wrap:wrap; gap:5px; align-items:center; }
+.recommend .rt { font-size:11.5px; color:var(--dim); width:100%; }
+.ag-cards { display:grid; grid-template-columns:repeat(3,minmax(0,1fr)); gap:12px; width:100%; }
+/* 固定高度窗口，卡片在窗口内滚动，不撑长页面（水平零 padding 保持与表单对齐） */
+.ag-list-view { max-height:420px; overflow-y:auto; overflow-x:hidden; scrollbar-width:none; }
+.ag-list-view::-webkit-scrollbar { width:0; height:0; }
+@media (max-width:1100px) { .ag-cards { grid-template-columns:repeat(2,minmax(0,1fr)); } }
+@media (max-width:700px) { .ag-cards { grid-template-columns:1fr; } }
+/* 列表区与表单卡片使用相同外框：左边界/宽度一致，卡片内边距统一 18px */
+.list-section { width:100%; }
+.list-section > .sect { margin:0 0 12px; padding-left:18px; }
+.member-picker { display:flex; flex-direction:column; gap:4px; max-height:140px; overflow-y:auto; border:1px solid var(--line); border-radius:8px; padding:6px; }
+.member-opt { display:flex; align-items:center; gap:8px; padding:6px 8px; border-radius:6px; cursor:pointer; }
+.member-opt:hover { background:var(--panel2); }
+.member-opt input { width:auto; }
+.member-opt .mo-name { font-size:12.5px; font-weight:500; }
+.member-opt .mo-desc { font-size:11.5px; color:var(--dim); overflow:hidden; text-overflow:ellipsis; white-space:nowrap; flex:1; }
+.ag-card { background:var(--panel); border:1px solid var(--line); border-radius:10px; padding:14px 18px; position:relative; }
+/* Agent Card 覆盖层：与信息卡同尺寸，点 × 退出 */
+.card-overlay { position:absolute; inset:0; background:var(--panel); border:1px solid var(--acc); border-radius:10px; padding:12px 14px; z-index:5; display:flex; flex-direction:column; overflow:hidden; }
+.co-head { display:flex; align-items:center; justify-content:space-between; font-size:12.5px; font-weight:600; color:var(--acc); margin-bottom:8px; }
+.co-close { background:none; border:none; color:var(--dim); font-size:20px; line-height:1; cursor:pointer; padding:0 4px; }
+.co-close:hover { color:var(--fg); }
+.card-overlay pre { flex:1; overflow:auto; font-size:11px; line-height:1.5; margin:0; }
+.ag-head { display:flex; align-items:center; gap:8px; }
+.ag-title { font-weight:600; font-size:14px; flex:1; min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+.ag-desc { font-size:12.5px; color:var(--fg2); line-height:1.55; margin:8px 0; min-height:38px; }
+.ag-tags { display:flex; gap:5px; flex-wrap:wrap; margin-bottom:10px; }
+.ag-actions { display:flex; gap:4px; flex-wrap:wrap; padding-top:8px; border-top:1px solid var(--line); }
+
+/* ── Skill 市场：分类导航 + 卡片网格 ── */
+.cat-bar { display:flex; gap:8px; flex-wrap:wrap; margin-bottom:16px; }
+.cat-chip { display:flex; align-items:center; gap:6px; background:var(--panel); border:1px solid var(--line); border-radius:20px; padding:6px 14px; cursor:pointer; font:inherit; font-size:13px; color:var(--fg2); transition:all .15s; }
+.cat-chip:hover { border-color:var(--acc); color:var(--fg); }
+.cat-chip.on { background:var(--acc-soft); border-color:var(--acc); color:var(--acc); font-weight:600; }
+.cat-chip .n { font-size:11px; opacity:.7; }
+.sk-grid { display:grid; grid-template-columns:repeat(auto-fill, minmax(240px, 1fr)); gap:12px; }
+.sk-card { background:var(--panel); border:1px solid var(--line); border-radius:10px; padding:14px 16px; cursor:pointer; transition:border-color .15s, transform .12s, box-shadow .15s; position:relative; }
+.sk-card:hover { border-color:var(--acc); transform:translateY(-2px); box-shadow:0 6px 18px rgba(0,0,0,.14); }
+.sk-card .st { display:flex; align-items:center; gap:8px; margin-bottom:6px; }
+.sk-card .sn { font-weight:600; font-size:13.5px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+.sk-card .sd { font-size:12px; color:var(--dim); line-height:1.55; display:-webkit-box; -webkit-line-clamp:2; -webkit-box-orient:vertical; overflow:hidden; }
+.sk-card .sm { display:flex; gap:6px; margin-top:9px; flex-wrap:wrap; }
+/* hover 简介浮层 */
+.sk-tip { position:absolute; left:0; right:0; bottom:0; background:var(--bg2); border-top:1px solid var(--line); padding:10px 16px; font-size:12px; color:var(--fg2); line-height:1.55; border-radius:0 0 10px 10px; opacity:0; transform:translateY(6px); transition:opacity .15s, transform .15s; pointer-events:none; }
+.sk-card:hover .sk-tip { opacity:1; transform:translateY(0); }
+/* 文件树 */
+.ftree { font-size:12.5px; line-height:1.85; }
+.ftree .fi { display:flex; align-items:center; gap:6px; color:var(--fg2); }
+.ftree .fi.dir { color:var(--fg); font-weight:500; }
+.ftree .fi .sz { color:var(--dim); font-size:11px; margin-left:auto; }
+.ftree .fl { padding-left:16px; border-left:1px dashed var(--line); margin-left:5px; }
+
+</style>
+</head>
+<body>
+<header>
+  <div class="logo">A</div>
+  <h1>Agent 工作系统</h1>
+  <div class="spacer"></div>
+  <button class="hbtn" id="themeBtn" onclick="toggleTheme()">深色</button>
+</header>
+<div class="wrap">
+  <nav id="nav">
+    <div class="nav-sec">资产市场</div>
+    <button data-p="skills"><span class="ic">◇</span>Skill 市场</button>
+    <button data-p="plugins"><span class="ic">◇</span>插件市场</button>
+    <button data-p="agents"><span class="ic">◇</span>Agent 市场</button>
+    <div class="nav-sec">运行与集成</div>
+    <button data-p="chat" class="on"><span class="ic">◇</span>智能对话</button>
+    <button data-p="playground"><span class="ic">◇</span>Playground</button>
+    <button data-p="a2a"><span class="ic">◇</span>A2A 通信</button>
+    <button data-p="mcp"><span class="ic">◇</span>MCP 市场</button>
+    <button data-p="rag"><span class="ic">◇</span>知识库</button>
+    <div class="nav-sec">治理</div>
+    <button data-p="obs"><span class="ic">◇</span>计量与审计</button>
+  </nav>
+  <main><div class="inner" id="main"></div></main>
+</div>
+
+<script>
+/* ── 主题切换 ── */
+function applyTheme(t) {
+  document.documentElement.dataset.theme = t;
+  localStorage.setItem('aws-theme', t);
+  document.getElementById('themeBtn').textContent = t === 'dark' ? '深色' : '浅色';
+}
+function toggleTheme() {
+  applyTheme(document.documentElement.dataset.theme === 'dark' ? 'light' : 'dark');
+}
+applyTheme(localStorage.getItem('aws-theme') || 'dark');
+
+const $ = sel => document.querySelector(sel);
+const api = (p, opt) => fetch(p, opt).then(async r => {
+  const body = await r.json().catch(() => ({}));
+  if (!r.ok) throw new Error(typeof body.detail === 'object' ? `${body.detail.rule}: ${body.detail.message}` : (body.detail || r.statusText));
+  return body;
+});
+const esc = s => String(s ?? '').replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+const msg = (ok, text) => `<div class="msg ${ok?'ok':'bad'}">${esc(text)}</div>`;
+const loading = txt => `<span class="spin"></span> <span style="color:var(--dim);font-size:12.5px">${esc(txt||'处理中…')}</span>`;
+const page = $('#main');
+let chat = { id: null, state: 'clarify', draft: null };
+
+/* 临时提示：5 秒后自动消失，新消息覆盖旧计时 */
+const _msgTimers = new WeakMap();
+function flashMsg(el, ok, text, timeout = 5000) {
+  if (!el) return;
+  clearTimeout(_msgTimers.get(el));
+  el.innerHTML = msg(ok, text);
+  _msgTimers.set(el, setTimeout(() => { el.innerHTML = ''; _msgTimers.delete(el); }, timeout));
+}
+function clearMsg(el) { if (el) { clearTimeout(_msgTimers.get(el)); el.innerHTML = ''; } }
+
+const VALID_VIEWS = ['chat','skills','plugins','agents','playground','a2a','mcp','rag','obs'];
+function currentView() {
+  const v = localStorage.getItem('aws-view');
+  return VALID_VIEWS.includes(v) ? v : 'chat';
+}
+function showView(p, remember = true) {
+  document.querySelectorAll('#nav button').forEach(x => x.classList.toggle('on', x.dataset.p === p));
+  if (remember) localStorage.setItem('aws-view', p);
+  // 离开智能对话页：断开 SSE 消费与状态轮询，但后台任务继续执行并落库
+  if (p !== 'chat') {
+    if (typeof orchStop === 'function') orchStop(false);
+    if (window._orchStatusTimer) { clearInterval(window._orchStatusTimer); window._orchStatusTimer = null; }
+  }
+  (views[p] || views.chat)();
+}
+document.querySelectorAll('#nav button').forEach(b => b.onclick = () => showView(b.dataset.p));
+function goto(p) { showView(p); }
+
+/* ── 自定义弹框：返回 Promise ── */
+function modal({ title, message = '', input = false, defaultValue = '', confirmText = '确定', cancelText = '取消', danger = false, html = '', collect = null }) {
+  return new Promise(resolve => {
+    const mask = document.createElement('div');
+    mask.className = 'modal-mask';
+    mask.innerHTML = `<div class="modal" ${html ? 'style="width:560px"' : ''}>
+      <div class="mt">${esc(title)}</div>
+      ${html ? `<div class="md" style="max-height:70vh;overflow-y:auto">${html}</div>` : (message ? `<div class="md">${esc(message)}</div>` : '')}
+      ${input ? `<input id="modal-input" value="${esc(defaultValue)}" placeholder="请输入">` : ''}
+      <div class="mb">
+        ${cancelText ? `<button class="ghost" id="modal-cancel">${esc(cancelText)}</button>` : ''}
+        <button class="act" id="modal-ok" ${danger ? 'style="background:var(--bad)"' : ''}>${esc(confirmText)}</button>
+      </div></div>`;
+    document.body.appendChild(mask);
+    const done = v => { mask.remove(); resolve(v); };
+    const cancelBtn = mask.querySelector('#modal-cancel');
+    if (cancelBtn) cancelBtn.onclick = () => done(null);
+    mask.querySelector('#modal-ok').onclick = () => {
+      if (collect) {
+        const data = {};
+        for (const [key, sel] of Object.entries(collect)) {
+          const el = mask.querySelector(sel);
+          data[key] = el ? el.value : '';
+        }
+        done(data);
+      } else {
+        done(input ? mask.querySelector('#modal-input').value.trim() : true);
+      }
+    };
+    mask.onclick = e => { if (e.target === mask) done(null); };
+    if (input) { const i = mask.querySelector('#modal-input'); i.focus(); i.select(); i.onkeydown = e => { if (e.key === 'Enter') mask.querySelector('#modal-ok').click(); }; }
+  });
+}
+/* 轻量提示：右上角浮出，自动消失（区别于模态 toast） */
+function toastQuick(message, ok = true, ms = 3000) {
+  let box = document.querySelector('#quick-toast');
+  if (!box) {
+    box = document.createElement('div'); box.id = 'quick-toast';
+    document.body.appendChild(box);
+  }
+  box.innerHTML = `<div class="qt-item ${ok?'ok':'bad'}">${esc(message)}</div>`;
+  clearTimeout(window._qtTimer);
+  window._qtTimer = setTimeout(() => { box.innerHTML = ''; }, ms);
+}
+const toast = async (message, title = '提示') => { await modal({ title, message, cancelText: '关闭' }); };
+
+/* ═══ Skill 市场 ═══ */
+// ── 智能对话：全局会话状态（页面切换不丢失）──
+let orch = { id: null, title: "新对话", loading: false, messageId: null };
+let orchSessions = [];                // 会话列表
+let orchStreamAbort = null;           // 当前 SSE 请求的 AbortController
+const ORCH_CACHE = {};                // session_id -> history（切页保留）
+const ORCH_QUEUES = {};               // session_id -> [{id, text}] 待发消息队列（可编辑/删除）
+
+/* ── 待发队列操作 ── */
+function orchQueue(sid) { return ORCH_QUEUES[sid] || (ORCH_QUEUES[sid] = []); }
+function renderQueue() {
+  const wrap = document.querySelector('#send-queue');
+  if (!wrap) return;
+  const q = orchQueue(orch.id);
+  wrap.classList.toggle('hidden', q.length === 0);
+  const list = wrap.querySelector('.q-list');
+  if (!list) return;
+  list.innerHTML = q.map((m, i) => `
+    <div class="q-item" data-qid="${esc(m.id)}">
+      <span class="qn">${i + 1}.</span>
+      <span class="qt" title="点击编辑">${esc(m.text)}</span>
+      <button class="qop" title="编辑" onclick="orchEditQueued('${esc(m.id)}',this)">编辑</button>
+      <button class="qop del" title="删除" onclick="orchDelQueued('${esc(m.id)}')">删除</button>
+    </div>`).join('');
+}
+function orchEditQueued(qid, btn) {
+  const item = btn.closest('.q-item');
+  const span = item.querySelector('.qt');
+  const q = orchQueue(orch.id), msg = q.find(m => m.id === qid);
+  if (!msg) return;
+  const input = document.createElement('input');
+  input.className = 'qt'; input.value = msg.text;
+  span.replaceWith(input);
+  input.focus(); input.select();
+  const save = () => {
+    const v = input.value.trim();
+    if (v) msg.text = v;
+    renderQueue();
+  };
+  input.onblur = save;
+  input.onkeydown = e => {
+    if (e.key === 'Enter') { e.preventDefault(); save(); }
+    if (e.key === 'Escape') renderQueue();
+  };
+}
+function orchDelQueued(qid) {
+  ORCH_QUEUES[orch.id] = orchQueue(orch.id).filter(m => m.id !== qid);
+  renderQueue();
+}
+function orchClearQueue() { ORCH_QUEUES[orch.id] = []; renderQueue(); }
+function orchEnqueue(text) {
+  orchQueue(orch.id).push({ id: 'q' + Date.now() + Math.floor(Math.random()*1000), text });
+  renderQueue();
+}
+
+/* ── 会话管理 ── */
+let orchListGen = 0;  // 会话列表加载代次：避免旧请求覆盖新状态
+let ORCH_RUNNING = new Set();  // 正在执行任务的会话（转圈状态）
+let ORCH_UNREAD = new Set();   // 任务在后台完成、用户尚未回去查看的会话（绿点）
+async function orchLoadSessions() {
+  const gen = ++orchListGen;
+  try {
+    const [list, running] = await Promise.all([
+      api('/orchestrator/sessions'),
+      api('/orchestrator/running').catch(() => []),
+    ]);
+    if (gen !== orchListGen) return;
+    orchSessions = list;
+    window.__orchRunningList = running || [];   // 供切回会话时重建进行中的任务
+    const runningSet = new Set((running || []).map(x => x.session_id));
+    // 之前在跑、现在不在跑的会话 = 任务刚完成；若用户不在该会话，标为未读（绿点）
+    for (const sid of ORCH_RUNNING) {
+      if (!runningSet.has(sid) && sid !== orch.id) ORCH_UNREAD.add(sid);
+    }
+    ORCH_RUNNING = runningSet;
+  } catch (e) { if (gen === orchListGen) orchSessions = []; }
+  if (gen === orchListGen) renderSessList();
+}
+function renderSessList() {
+  const el = document.querySelector('#sess-list');
+  if (!el) return;
+  el.innerHTML = orchSessions.length ? orchSessions.map(s => {
+    const running = ORCH_RUNNING.has(s.session_id);
+    const unread = !running && ORCH_UNREAD.has(s.session_id) && s.session_id !== orch.id;
+    const statusIcon = running
+      ? '<span class="spin" style="width:11px;height:11px;border-width:1.5px" title="任务执行中"></span>'
+      : (unread ? '<span class="sess-done" title="任务已完成，点击查看"></span>' : '<span class="sess-status-empty"></span>');
+    return `<div class="sess-item ${s.session_id === orch.id ? 'on' : ''}" onclick="orchSwitch('${esc(s.session_id)}')">
+      ${statusIcon}<span class="st" title="${esc(s.title)}">${esc(s.title || '新对话')}</span>
+      <button class="del" title="删除会话" onclick="event.stopPropagation();orchDelete('${esc(s.session_id)}')">删除</button>
+    </div>`;
+  }).join('') : '<div style="padding:14px;color:var(--dim);font-size:12px;text-align:center">暂无历史会话</div>';
+}
+async function orchNew() {
+  orchStop(false);
+  try {
+    const s = await api('/orchestrator/sessions', {method:'POST'});
+    orch = { id: s.session_id, title: s.title || '新对话', loading: false, messageId: null };
+    ORCH_CACHE[s.session_id] = [];
+    await orchLoadSessions();
+    orchRenderHistory();
+    document.querySelector('#orch-in')?.focus();
+  } catch (e) { toast('新建会话失败: ' + e.message, '操作失败'); }
+}
+async function orchSwitch(sid) {
+  if (sid === orch.id) return;
+  orchStop(false);   // 只断开当前 SSE，不取消后台任务
+  ORCH_UNREAD.delete(sid);   // 用户回到该会话：绿点（未读完成）消失
+  orch = { id: sid, title: '对话', loading: false, messageId: null };
+  await orchLoadSessions();
+  // 切回会话：从后端拉权威历史（后台任务可能在离开期间完成并落库）
+  try {
+    const d = await api(`/orchestrator/sessions/${sid}`);
+    const serverHistory = d.history || [];
+    const localCache = ORCH_CACHE[sid] || [];
+    const pendingMsgs = localCache.filter(m => m.pending);
+    // 后端历史不含本地待完成消息（任务仍在跑）时，把 pending 合并进去，避免 welcome 重现
+    const serverTexts = serverHistory.map(m => m.content).join('\n');
+    const missingPending = pendingMsgs.filter(m => !serverTexts.includes(m.content));
+    ORCH_CACHE[sid] = serverHistory.concat(missingPending);
+  }
+  catch (e) { if (!ORCH_CACHE[sid]) ORCH_CACHE[sid] = []; }
+  const s = orchSessions.find(x => x.session_id === sid);
+  if (s) orch.title = s.title || '新对话';
+  orchRenderHistory();
+  // 若该会话有后台任务正在执行：重建"进行中"消息并重连 SSE 续读进度
+  const runInfo = (window.__orchRunningList || []).find(x => x.session_id === sid);
+  if (runInfo && runInfo.messages && runInfo.messages.length) {
+    orchResumeRunning(sid, runInfo.messages[0]);
+  }
+  renderQueue();
+  // 切回会话时：若该会话有待发消息且当前空闲，自动消费（切走期间不会消费）
+  if (!orch.loading && orchQueue(sid).length) {
+    const next = orchQueue(sid).shift();
+    renderQueue();
+    if (next) { const i = document.querySelector('#orch-in'); if (i) { i.value = next.text; orchSend(); } }
+  }
+  document.querySelector('#orch-in')?.focus();
+}
+async function orchDelete(sid) {
+  if (!(await modal({ title: '删除会话', message: '确定删除这个会话？删除后无法恢复。', confirmText: '删除', danger: true }))) return;
+  try {
+    await api(`/orchestrator/sessions/${sid}`, {method:'DELETE'});
+    delete ORCH_CACHE[sid];
+    // 立即从本地列表移除并重绘，避免异步刷新覆盖导致快速连删丢失
+    orchSessions = orchSessions.filter(s => s.session_id !== sid);
+    delete ORCH_QUEUES[sid];
+    if (sid === orch.id) {
+      // 当前会话被删：直接切换到列表首项或新建，不用旧的 orch.id 状态
+      orch = { id: null, title: '新对话', loading: false, messageId: null };
+      if (orchSessions.length) {
+        const s = orchSessions[0];
+        orch = { id: s.session_id, title: s.title || '新对话', loading: false, messageId: null };
+      } else {
+        const created = await api('/orchestrator/sessions', {method:'POST'});
+        orch = { id: created.session_id, title: created.title || '新对话', loading: false, messageId: null };
+        orchSessions = [{session_id: created.session_id, title: created.title || '新对话'}];
+      }
+      orchRenderHistory();
+    }
+    renderSessList();
+    renderQueue();
+    orchUpdateSendState();
+    // 后台再拉一次权威列表校正（不阻塞交互）
+    orchLoadSessions();
+  } catch (e) { toast('删除失败: ' + e.message, '操作失败'); }
+}
+function orchStop(cancelBackend = true) {
+  // 中断 SSE 连接：前端不再消费事件；后台任务是否取消取决于 cancelBackend。
+  // 切换会话/切换页面时传 false —— 任务在后台继续执行并落库。
+  if (orchStreamAbort) { orchStreamAbort.abort(); orchStreamAbort = null; }
+  if (cancelBackend && orch.messageId) {
+    api(`/orchestrator/messages/${orch.messageId}/cancel`, {method:'POST'}).catch(() => {});
+    orch.messageId = null;
+  }
+  orch.loading = false;
+  orchUpdateSendState();
+}
+function orchUpdateSendState() {
+  const go = document.querySelector('#orch-go');
+  const stop = document.querySelector('#orch-stop');
+  // 处理中仍可发送：新消息进入待发队列（需求：用户可继续提问）
+  if (go) go.disabled = !orch.id;
+  if (stop) stop.classList.toggle('hidden', !orch.loading);
+}
+
+/* ── 历史渲染 ── */
+function orchRenderHistory() {
+  const body = document.querySelector('#orch-body');
+  if (!body) return;
+  const hist = ORCH_CACHE[orch.id] || [];
+  const pairs = [];
+  for (let i = 0; i < hist.length; i++) {
+    if (hist[i].role === 'user') {
+      pairs.push({user: hist[i].content, ai: (hist[i+1] && hist[i+1].role === 'assistant') ? hist[i+1] : null});
+      if (hist[i+1] && hist[i+1].role === 'assistant') i++;
+    } else if (hist[i].role === 'assistant') {
+      pairs.push({user: null, ai: hist[i]});
+    }
+  }
+  if (pairs.length === 0) {
+    body.innerHTML = `<div class="welcome"><div class="big">有什么可以帮你？</div>
+      <div class="sub">通用问题我直接回答；若知识库有相关内容会一并参考</div>
+      <div class="sugg">
+        <button onclick="quickAsk('解释一下什么是 RAG 检索增强')">解释一下什么是 RAG 检索增强</button>
+        <button onclick="quickAsk('帮我写一段 Python 快速排序代码')">帮我写一段 Python 快速排序代码</button>
+        <button onclick="quickAsk('帮我制定一个一周健身计划')">帮我制定一个一周健身计划</button>
+        <button onclick="quickAsk('用简单的语言解释什么是消息队列')">用简单的语言解释什么是消息队列</button>
+      </div></div>`;
+    return;
+  }
+  body.innerHTML = pairs.map(p => {
+    let h = '';
+    if (p.user) h += `<div class="turn user"><div class="bubble">${fmtText(p.user)}</div></div>`;
+    if (p.ai) {
+      const rsn = (p.ai.reasoning || '').trim();
+      h += `<div class="turn ai">
+        ${rsn ? `<details class="think"><summary><span class="caret">▸</span><span class="label">已深度思考</span><span class="line"></span></summary><div class="think-body">${esc(rsn)}</div></details>` : ''}
+        <div class="content">${fmtText(p.ai.content || '')}</div></div>`;
+    }
+    return h;
+  }).join('');
+  body.scrollTop = body.scrollHeight;
+}
+window.quickAsk = t => { const i = document.querySelector('#orch-in'); if (i) { i.value = t; orchSend(); } };
+
+// 净化输出：去掉 Markdown 强调符、标题符、列表符，保留人类可读的普通文本
+const fmtText = t => {
+  const s = String(t ?? '')
+    .replace(/\*\*/g, '').replace(/__/g, '')
+    .replace(/^#{1,6}\s*/gm, '')
+    .replace(/^\s*[-*+]\s+/gm, '')
+    .replace(/`([^`]*)`/g, '$1');
+  return esc(s).replace(/\n/g, '<br>');
+};
+const STAGE_TXT = {thinking:'思考中…', queued:'排队中…'};
+
+/* ── 发送消息（队列 + 流式 + 可中断）── */
+async function orchSend() {
+  const inp = document.querySelector('#orch-in'), text = inp.value.trim();
+  if (!text || !orch.id) return;
+  const sid = orch.id;   // 发起时的会话：完成后只在仍停留该会话时才写缓存/消费队列
+  // LLM 正在处理：消息进入待发队列（可编辑/删除），不立即发送
+  if (orch.loading) {
+    orchEnqueue(text);
+    inp.value = ''; inp.style.height = 'auto';
+    return;
+  }
+  inp.value = ''; inp.style.height = 'auto';
+
+  // 立即写入该会话缓存：用户切走再切回时，即使后端尚未落库也不会退回欢迎面板
+  const cacheNow = ORCH_CACHE[sid] || (ORCH_CACHE[sid] = []);
+  cacheNow.push({role:'user', content:text, pending:true});
+
+  const body = document.querySelector('#orch-body');
+  body.querySelector('.welcome')?.remove();
+  body.insertAdjacentHTML('beforeend', `<div class="turn user"><div class="bubble">${fmtText(text)}</div></div>`);
+  const turn = document.createElement('div');
+  turn.className = 'turn ai';
+  turn.innerHTML = `<details class="think hidden"><summary><span class="caret">▸</span><span class="label">思考中…</span><span class="line"></span></summary><div class="think-body"></div></details>
+    <div class="content"><span class="spin"></span> <span style="color:var(--dim);font-size:12.5px">排队中…</span></div>`;
+  body.appendChild(turn);
+  body.scrollTop = body.scrollHeight;
+
+  orch.loading = true; orchUpdateSendState();
+  orchStreamAbort = new AbortController();
+  const thinkEl = turn.querySelector('details.think');
+  const thinkBody = turn.querySelector('.think-body');
+  const thinkLabel = turn.querySelector('.think .label');
+  const contentEl = turn.querySelector('.content');
+  let full = '', rsn = '', canceled = false;
+
+  try {
+    const resp = await fetch(`/orchestrator/sessions/${sid}/chat/stream`, {
+      method:'POST', headers:{'content-type':'application/json'},
+      body: JSON.stringify({text}), signal: orchStreamAbort.signal,
+    });
+    if (!resp.ok || !resp.body) throw new Error('HTTP ' + resp.status);
+    const reader = resp.body.getReader(), dec = new TextDecoder();
+    let buf = '';
+    while (true) {
+      const {done, value} = await reader.read();
+      if (done) break;
+      buf += dec.decode(value, {stream:true});
+      let idx;
+      while ((idx = buf.indexOf('\n\n')) >= 0) {
+        const frame = buf.slice(0, idx); buf = buf.slice(idx + 2);
+        for (const line of frame.split('\n')) {
+          if (!line.startsWith('data:')) continue;
+          let ev; try { ev = JSON.parse(line.slice(5)); } catch { continue; }
+          if (ev.type === 'queued') {
+            orch.messageId = ev.message_id;
+            contentEl.innerHTML = `<span class="spin"></span> <span style="color:var(--dim);font-size:12.5px">排队中…（前面 ${ev.pending} 条）</span>`;
+          }
+          else if (ev.type === 'delegation') {
+            // A2A 委托轨迹：主 Agent 调用了专业子 Agent（替换占位）
+            const html = `已委托子 Agent <b>${esc(ev.agent)}</b> 处理${ev.reason ? ' · ' + esc(ev.reason) : ''}`;
+            const existing = turn.querySelector('.deli');
+            if (existing) existing.innerHTML = html;
+            else turn.insertAdjacentHTML('afterbegin', `<div class="deli">${html}</div>`);
+            body.scrollTop = body.scrollHeight;
+          }
+          else if (ev.type === 'status') {
+            thinkEl.classList.remove('hidden');
+            thinkLabel.textContent = STAGE_TXT[ev.stage] || ev.stage;
+            if (ev.stage === 'delegating' && ev.agent) {
+              if (!turn.querySelector('.deli')) {
+                turn.insertAdjacentHTML('afterbegin',
+                  `<div class="deli">正在调用子 Agent <b>${esc(ev.agent)}</b>…</div>`);
+              }
+              contentEl.innerHTML = `<span class="spin"></span> <span style="color:var(--dim);font-size:12.5px">子 Agent 处理中…</span>`;
+            }
+          }
+          else if (ev.type === 'reasoning') {
+            thinkEl.classList.remove('hidden');
+            thinkLabel.textContent = '已深度思考';
+            rsn += ev.delta; thinkBody.textContent = rsn;
+            body.scrollTop = body.scrollHeight;
+          }
+          else if (ev.type === 'content') {
+            if (thinkEl.open) thinkEl.open = false;
+            thinkLabel.textContent = '已深度思考';
+            full += ev.delta;
+            contentEl.innerHTML = fmtText(full) + '<span class="cursor"></span>';
+            body.scrollTop = body.scrollHeight;
+          }
+          else if (ev.type === 'canceled') {
+            canceled = true;
+            if (ev.partial && ev.partial.length > full.length) full = ev.partial;
+          }
+          else if (ev.type === 'error') {
+            contentEl.innerHTML += `<span style="color:var(--bad)">${esc(ev.message)}</span>`;
+          }
+          else if (ev.type === 'done') {
+            full = ev.reply; rsn = ev.reasoning || rsn;
+          }
+        }
+      }
+    }
+  } catch (e) {
+    if (e.name === 'AbortError') canceled = true;
+    else contentEl.innerHTML += `<span style="color:var(--bad)">${esc('出错了: ' + e.message)}</span>`;
+  }
+
+  contentEl.innerHTML = fmtText(full || '') + (canceled ? '<div class="d" style="color:var(--dim);margin-top:6px">已中断</div>' : '');
+  // 持久化到该会话的缓存（即使已切换会话也要写入正确会话）
+  const cache = ORCH_CACHE[sid] || (ORCH_CACHE[sid] = []);
+  // 用正式用户消息替换开头写入的 pending 占位（保留消息顺序，避免重复）
+  const pendingIdx = cache.findIndex(m => m.pending && m.content === text);
+  if (pendingIdx >= 0) cache.splice(pendingIdx, 1);
+  cache.push({role:'user', content:text});
+  cache.push({role:'assistant', content: full, reasoning: rsn});
+
+  const stillHere = orch.id === sid;
+  // 只有仍停留在该会话、且是最新一次请求时，才重置全局 loading 状态
+  if (stillHere && orchStreamAbort && orchStreamAbort.signal.aborted === false) {
+    orch.loading = false; orch.messageId = null; orchStreamAbort = null;
+  }
+  if (stillHere) {
+    orchUpdateSendState();
+    orchLoadSessions();
+    document.querySelector('#orch-in')?.focus();
+    // 自动发送该会话队列中的下一条（若用户未删除）
+    const next = orchQueue(sid).shift();
+    renderQueue();
+    if (next) {
+      const i = document.querySelector('#orch-in');
+      if (i) { i.value = next.text; orchSend(); }
+    }
+  }
+}
+
+
+// 切回正在执行的会话：用事件快照重建进度，并重连 SSE 续读后续事件
+async function orchResumeRunning(sid, m) {
+  const body = document.querySelector('#orch-body'); if (!body || !m) return;
+  // 清理欢迎面板（orchSwitch 先渲染了它，此时才知道有后台任务在跑）
+  body.querySelector('.welcome')?.remove();
+  // 重建一条"进行中"消息（用户输入 + AI 进行中占位）
+  body.insertAdjacentHTML('beforeend', `<div class="turn user"><div class="bubble">${fmtText(m.text)}</div></div>`);
+  const turn = document.createElement('div');
+  turn.className = 'turn ai resuming';
+  turn.innerHTML = `<div class="content"><span class="spin"></span> <span style="color:var(--dim);font-size:12.5px">任务执行中…</span></div>`;
+  body.appendChild(turn);
+  body.scrollTop = body.scrollHeight;
+  // 同步写入缓存：这样任何 orchRenderHistory 重绘都不会把进行中的消息冲掉
+  const rc = ORCH_CACHE[sid] || (ORCH_CACHE[sid] = []);
+  if (!rc.some(x => x.pending && x.content === m.text)) {
+    rc.push({role:'user', content:m.text, pending:true});
+    rc.push({role:'assistant', content:'', pending:true});
+  }
+  const contentEl = turn.querySelector('.content');
+  // 用快照事件重建当前进度
+  let full = '';
+  for (const ev of (m.events || [])) {
+    if (ev.type === 'content') full += ev.delta || '';
+    else if (ev.type === 'done') full = ev.reply || full;
+  }
+  if (full) contentEl.innerHTML = fmtText(full) + '<span class="cursor"></span>';
+  orch.loading = true; orch.messageId = m.id; orchUpdateSendState();
+  // 重连 SSE：从已有事件数开始续读
+  const fromIndex = (m.events || []).length;
+  orchStreamAbort = new AbortController();
+  try {
+    const resp = await fetch(`/orchestrator/messages/${m.id}/stream?from_index=${fromIndex}`,
+                             {signal: orchStreamAbort.signal});
+    const reader = resp.body.getReader(), dec = new TextDecoder();
+    let buf = '';
+    while (true) {
+      const {done, value} = await reader.read();
+      if (done) break;
+      buf += dec.decode(value, {stream:true});
+      let idx;
+      while ((idx = buf.indexOf('\n\n')) >= 0) {
+        const frame = buf.slice(0, idx); buf = buf.slice(idx + 2);
+        for (const line of frame.split('\n')) {
+          if (!line.startsWith('data:')) continue;
+          let ev; try { ev = JSON.parse(line.slice(5)); } catch { continue; }
+          if (ev.type === 'content') { full += ev.delta || ''; contentEl.innerHTML = fmtText(full) + '<span class="cursor"></span>'; body.scrollTop = body.scrollHeight; }
+          else if (ev.type === 'done') { full = ev.reply || full; }
+        }
+      }
+    }
+  } catch (e) { /* 切换/断开：后台任务继续，不处理 */ }
+  contentEl.innerHTML = fmtText(full || '任务已完成');
+  // 完成后刷新历史与状态（若仍在该会话）
+  if (orch.id === sid) {
+    orch.loading = false; orch.messageId = null; orchUpdateSendState();
+    try {
+      const d = await api(`/orchestrator/sessions/${sid}`);
+      const hist = d.history || [];
+      // 后端已落库才用权威历史覆盖；否则保留本地缓存（含刚完成的消息），避免欢迎面板重现
+      if (hist.length) ORCH_CACHE[sid] = hist;
+      orchRenderHistory();
+    } catch (e) {}
+    orchLoadSessions();
+  }
+}
+
+// Playground 按 Agent 缓存对话：切页面保留，切换 Agent 才切换对话
+const PG_CACHE = {};      // agent_id -> [{role, content, steps, token_usage}]
+const DOC_GENRES = [
+  {key:'contract', label:'合同/协议'}, {key:'legal', label:'法律/法规'},
+  {key:'academic', label:'论文/学术'}, {key:'faq', label:'FAQ/问答'},
+  {key:'meeting', label:'会议纪要/工作文档'}, {key:'manual', label:'技术手册/说明书'},
+  {key:'report', label:'表格/报表'}, {key:'code', label:'代码'},
+  {key:'article', label:'新闻/普通文章'}, {key:'log', label:'日志'},
+  {key:'custom', label:'自定义（自定块长/重叠）'},
+];
+let PG_AGENT_ID = null;
+
+const views = {
+chat: async () => {
+  page.innerHTML = `
+    <div class="chat-layout">
+      <div class="sess-side">
+        <div class="sess-head">
+          <span class="t">会话</span>
+          <button class="sess-new" title="新会话" onclick="orchNew()">＋</button>
+        </div>
+        <div class="sess-list" id="sess-list"></div>
+      </div>
+      <div class="chat-main">
+        <div class="chat-page">
+          <div class="chat-scroll" id="orch-body"></div>
+          <div class="send-queue hidden" id="send-queue">
+            <div class="q-head">待发消息（按顺序自动发送）
+              <button class="clear" onclick="orchClearQueue()">清空</button>
+            </div>
+            <div class="q-list"></div>
+          </div>
+          <div class="composer-wrap">
+            <div class="composer">
+              <textarea id="orch-in" rows="1" placeholder="给通用主 Agent 发送消息…"></textarea>
+              <button class="send stop hidden" id="orch-stop" title="中断生成" onclick="orchStop()" style="width:auto;padding:0 12px">停止</button>
+              <button class="send" id="orch-go" title="发送" onclick="orchSend()" style="width:auto;padding:0 12px">发送</button>
+            </div>
+            <div class="chat-foot">通用主 Agent · 处理中可继续发消息，它们会进入上方队列，可编辑或删除</div>
+          </div>
+        </div>
+      </div>
+    </div>`;
+  // 恢复上次会话或用最新历史；历史状态从后端加载（页面切换不丢）
+  await orchLoadSessions();
+  // 当前会话已被删除（或列表为空）→ 自动新建
+  if (orch.id && !orchSessions.some(s => s.session_id === orch.id)) {
+    orch = { id: null, title: '新对话', loading: false, messageId: null };
+  }
+  if (!orch.id) {
+    if (orchSessions.length) {
+      const sid = orchSessions[0].session_id;
+      orch = { id: sid, title: orchSessions[0].title || '新对话', loading: false, messageId: null };
+    } else {
+      await orchNew();
+    }
+  }
+  if (!ORCH_CACHE[orch.id]) {
+    try { const d = await api(`/orchestrator/sessions/${orch.id}`); ORCH_CACHE[orch.id] = d.history || []; }
+    catch (e) { ORCH_CACHE[orch.id] = []; }
+  }
+  orchRenderHistory();
+  renderQueue();
+  renderSessList();
+  orchUpdateSendState();
+  // 定时刷新会话任务状态（转圈/绿点），使后台任务进度实时可见
+  if (window._orchStatusTimer) clearInterval(window._orchStatusTimer);
+  window._orchStatusTimer = setInterval(() => {
+    if (document.querySelector('#sess-list')) orchLoadSessions();
+  }, 2000);
+  const ta = $('#orch-in');
+  if (ta) {
+    ta.addEventListener('input', () => { ta.style.height = 'auto'; ta.style.height = Math.min(ta.scrollHeight, 160) + 'px'; });
+    ta.addEventListener('keydown', e => {
+      if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); orchSend(); }
+    });
+  }
+},
+skills: async () => {
+  page.innerHTML = `
+    <h2 class="vtitle">Skill 市场</h2>
+    <div class="vsub">按分类浏览已发布的 Skill，或创建属于你自己的 Skill</div>
+
+    <div class="grid2" style="margin-bottom:20px">
+      <div class="card">
+        <div class="t">对话设计 Skill<span class="tag acc">推荐</span></div>
+        <div class="d">在智能对话里描述你的需求，主 Agent 会调用 Skill 设计子 Agent 完成设计并发布。</div>
+        <div class="row" style="margin-top:12px">
+          <button class="act" onclick="goto('chat')">去智能对话设计</button>
+        </div>
+      </div>
+      <div class="card">
+        <div class="t">上传 Skill 文件</div>
+        <div class="d">上传完整的 Skill 包（zip）或单个 Markdown 文件（md），自动执行安全扫描与规范校验。</div>
+        <div class="row" style="margin-top:12px;align-items:center">
+          <input type="file" id="sk-file" accept=".zip,.md" style="display:none">
+          <button class="icon-btn" onclick="document.querySelector('#sk-file').click()" title="选择文件" aria-label="选择文件">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <path d="M12 19V5"></path><path d="m5 12 7-7 7 7"></path>
+            </svg>
+          </button>
+          <span id="sk-file-name" style="font-size:12.5px;color:var(--dim)">未选择文件（.zip 或 .md）</span>
+          <button class="act" onclick="skUpload()">上传</button>
+        </div>
+        <div id="sk-up-msg"></div>
+      </div>
+    </div>
+
+    <h3 class="sect">已发布 Skill</h3>
+    <div class="cat-bar" id="sk-cats"></div>
+    <div id="sk-list"></div>`;
+  bindSkillUpload();
+  await refreshSkillCatalog();
+},
+
+
+plugins: async () => {
+  page.innerHTML = `
+    <h2 class="vtitle">插件市场</h2>
+    <div class="vsub">组装 Agent 的运行时能力单元。可安装、停用、修改与卸载插件</div>
+    <div class="card" style="margin-bottom:16px">
+      <div class="t">设计自己的插件</div>
+      <div class="d">插件本质是「清单 + 配置」：用 plugin.json 声明扩展点与行为，无需写代码即可让插件在 Agent 运行时生效。</div>
+      <div class="row" style="margin-top:12px">
+        <button class="act" onclick="plDesignGuide()">查看设计指南</button>
+      </div>
+      <div id="pl-guide"></div>
+    </div>
+    <div class="card" style="margin-bottom:16px">
+      <div class="t">安装插件</div>
+      <div class="grid2" style="margin-top:8px">
+        <div>
+          <label class="f">从市场或 GitHub 安装（按 key 安装）</label>
+          <div class="row">
+            <input id="pl-key" placeholder="插件 key，如 my-plugin" style="flex:1">
+            <input id="pl-url" placeholder="GitHub 地址（可选）" style="flex:1">
+            <button class="act" onclick="plInstall()">安装</button>
+          </div>
+        </div>
+        <div>
+          <label class="f">从本地目录安装（含 plugin.json / package.json）</label>
+          <div class="row">
+            <input id="pl-dir" placeholder="插件目录绝对路径" style="flex:1">
+            <button class="act" onclick="plInstallLocal()">安装</button>
+          </div>
+        </div>
+      </div>
+      <div id="pl-install-msg"></div>
+    </div>
+    <div class="cat-bar" id="pl-cats"></div>
+    <div class="sk-grid" id="pl-list"></div>`;
+  await refreshPlugins();
+},
+
+
+agents: async () => {
+  page.innerHTML = `
+    <h2 class="vtitle">Agent 市场</h2>
+    <div class="vsub">组装、管理与协作 Agent。装了插件就自动获得对应能力</div>
+
+    <div class="card" style="margin-bottom:16px">
+      <div class="t">组装 Agent</div>
+      <div class="grid2">
+        <div><label class="f">名称（小写连字符）</label><input id="ag-n" placeholder="my-agent" style="width:100%"></div>
+        <div><label class="f">描述（用于智能推荐与团队协调）</label><input id="ag-d" placeholder="这个 Agent 做什么" style="width:100%"></div>
+      </div>
+      <label class="f">系统指令</label>
+      <textarea id="ag-p" placeholder="你是…"></textarea>
+
+      <div class="grid2" style="margin-top:8px">
+        <div>
+          <label class="f">引用的 Skill（独立菜单 · 可搜索 · 按描述推荐）</label>
+          <div class="pick-menu" id="ag-skill-menu"></div>
+          <div class="picked" id="ag-skills-picked"></div>
+        </div>
+        <div>
+          <label class="f">安装的插件（独立菜单 · 可搜索 · 按描述推荐）</label>
+          <div class="pick-menu" id="ag-plugin-menu"></div>
+          <div class="picked" id="ag-plugins-picked"></div>
+        </div>
+      </div>
+
+      <div class="row" style="margin-top:16px">
+        <button class="act" id="ag-submit-btn" onclick="agCreate()">校验并发布</button>
+        <button class="ghost hidden" id="ag-cancel-btn" onclick="agCancelEdit()">取消编辑</button>
+        <span id="ag-edit-note" class="dim" style="font-size:12px;align-self:center"></span>
+      </div>
+      <div id="ag-msg"></div>
+    </div>
+
+    <div class="list-section">
+      <h3 class="sect">Agent 列表</h3>
+      <div class="ag-list-view"><div class="ag-cards" id="ag-list"></div></div>
+    </div>
+
+    <div class="list-section" style="margin-top:24px">
+      <h3 class="sect">Agent 团队<span class="tag acc" style="margin-left:8px">协作</span></h3>
+      <div class="card" style="margin-bottom:12px">
+        <div class="d">主 Agent 只与团队的主理 Agent 通信，由主理 Agent 协调成员工作。创建团队时系统会自动生成主理 Agent。</div>
+        <div class="grid2" style="margin-top:10px">
+          <div><label class="f">团队名称</label><input id="tm-n" placeholder="my-team" style="width:100%"></div>
+          <div><label class="f">团队描述</label><input id="tm-d" placeholder="这个团队做什么" style="width:100%"></div>
+        </div>
+        <div class="grid2">
+          <div><label class="f">主理 Agent 名称（留空自动生成 &lt;团队名&gt;-leader）</label><input id="tm-leader" placeholder="可留空" style="width:100%"></div>
+          <div><label class="f">成员 Agent（可多选，悬停查看简介）</label><div id="tm-members" class="member-picker"></div></div>
+        </div>
+        <div class="row" style="margin-top:12px">
+          <button class="act" id="tm-submit-btn" onclick="teamCreate()">创建团队</button>
+          <button class="ghost hidden" id="tm-cancel-btn" onclick="teamCancelEdit()">取消编辑</button>
+          <span id="tm-edit-note" class="dim" style="font-size:12px;align-self:center"></span>
+        </div>
+        <div id="tm-msg"></div>
+      </div>
+      <div class="ag-list-view"><div class="ag-cards" id="tm-list"></div></div>
+    </div>`;
+
+  await loadAgentPickers();
+  await refreshAgentList();
+  await refreshTeamCandidates();
+  await refreshTeams();
+},
+
+
+playground: async () => {
+  const list = await api('/agents').catch(() => []);
+  // 恢复上次测试的 Agent（仅切换 Agent 时才换对话）
+  if (!PG_AGENT_ID || !list.some(a => a.id === PG_AGENT_ID)) {
+    PG_AGENT_ID = list[0]?.id || '';
+  }
+  const selId = (window.__pgTarget && list.some(a => a.id === window.__pgTarget)) ? window.__pgTarget : PG_AGENT_ID;
+  window.__pgTarget = null;
+  PG_AGENT_ID = selId;
+  const cur = list.find(a => a.id === selId);
+  page.innerHTML = `<div class="pg-page">
+    <div class="pg-title"><h2 class="vtitle">Playground</h2>
+      <div class="vsub">发布前与 Agent 真实对话，检查插件触发、RAG 命中与 token 消耗</div></div>
+    <div class="chat-shell pg-shell">
+      <div class="chat-head"><div class="dot"></div><div class="who">运行调试</div>
+        <div class="st"><select id="pg-ag">${list.map(a=>`<option value="${a.id}" ${a.id===selId?'selected':''}>${esc(a.name)} v${a.version}</option>`).join('') || '<option>暂无 Agent</option>'}</select></div>
+      </div>
+      <div class="chat-body" id="pg-body"></div>
+      <div class="pg-trace-wrap" id="pg-trace"></div>
+      <div class="chat-input">
+        <textarea id="pg-in" placeholder="给 Agent 发送消息…（Enter 发送，Shift+Enter 换行）"></textarea>
+        <div class="chat-actions"><button class="act" id="pg-go">发送</button></div>
+      </div>
+    </div>
+  </div>`;
+  renderPGChat();
+  $('#pg-ag').onchange = e => { PG_AGENT_ID = e.target.value; renderPGChat(); };
+  $('#pg-go').onclick = pgRun;
+  $('#pg-in').onkeydown = e => {
+    if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); pgRun(); }
+  };
+  $('#pg-in').oninput = () => { const t = $('#pg-in'); t.style.height='auto'; t.style.height=Math.min(t.scrollHeight,160)+'px'; };
+},
+
+a2a: async () => {
+  page.innerHTML = `<h2 class="vtitle">A2A 通信</h2>
+    <div class="vsub">Agent 间通过 A2A 协议协作；内部调用由主 Agent 在智能对话中自动发起，无需手动触发</div>
+
+    <div class="card" style="margin-bottom:16px">
+      <div class="t">我的 A2A 地址（把主 Agent 暴露出去）</div>
+      <div class="d">外部系统要调用你的 Agent，需要知道下面这个端点。把它复制给对方即可。</div>
+      <div id="my-a2a-url" style="margin-top:8px"></div>
+    </div>
+
+    <div class="card" style="margin-bottom:16px">
+      <div class="t">调用链查询</div>
+      <div class="d">查看一次请求里 Agent 之间的调用过程：谁调用了谁、顺序、状态与耗时。trace ID 可在智能对话的委托轨迹或下方历史列表获取。</div>
+      <div class="grid2" style="margin-top:10px">
+        <div>
+          <label class="f">选择最近调用链</label>
+          <select id="trace-select" style="width:100%"><option value="">加载中…</option></select>
+        </div>
+        <div>
+          <label class="f">或输入 trace ID 查询</label>
+          <div class="row"><input id="trace-id" placeholder="粘贴 trace ID" style="flex:1"><button class="act" onclick="traceQuery()">查询</button></div>
+        </div>
+      </div>
+      <div id="trace-result"></div>
+    </div>
+
+    <div class="card" style="margin-bottom:16px">
+      <div class="t">注册外部 Peer</div>
+      <div class="d">Peer 是<strong>另一个系统里的 A2A Agent</strong>（不属于本平台）。注册后本系统可向它发起外部调用，并受白名单、授权与出站脱敏约束。</div>
+      <div class="d" style="margin-top:6px;font-size:12px;color:var(--dim)">
+        URL 来源：由<strong>那个外部系统的管理员提供</strong>（就像调用任何外部 API 一样，本系统无法生成）。填它的 A2A 服务根地址，例如对方给出 https://their-host/a2a，就填这个完整地址；本系统会向 {URL}/a2a/tasks 提交任务。没有真实的外部 A2A Agent 时无需注册。
+      </div>
+      <div class="grid2" style="margin-top:10px">
+        <div><label class="f">名称</label><input id="pe-n" placeholder="partner-x" style="width:100%"></div>
+        <div><label class="f">Base URL（对方提供的 A2A 服务地址）</label><input id="pe-u" placeholder="https://their-host/a2a" style="width:100%"></div>
+      </div>
+      <label class="f">功能简介（这个外部 Agent 能干什么，用于分类与识别）</label>
+      <textarea id="pe-desc" placeholder="例如：负责代码审查与重构建议的外部 Agent" style="min-height:60px"></textarea>
+      <div class="row" style="margin-top:12px"><button class="act" onclick="peCreate()">注册</button></div>
+      <div id="pe-msg"></div>
+    </div>
+    <h3 class="sect">已注册 Peers</h3><div id="pe-list"></div>`;
+  await refreshPeers();
+  await refreshTraceList();
+  $('#trace-select').onchange = e => { if (e.target.value) { $('#trace-id').value = e.target.value; traceQuery(); } };
+  // 我的 A2A 地址
+  try {
+    const u = await api('/a2a/public-url');
+    const box = $('#my-a2a-url');
+    box.innerHTML = u.configured
+      ? `<div class="d" style="font-size:12px">任务端点：<code style="color:var(--acc)">${esc(u.tasks_url)}</code></div>
+         <div class="d" style="font-size:12px;margin-top:4px">Agent Card：<code>${esc(u.card_url)}</code></div>
+         <button class="pl-act" style="margin-top:8px" onclick="navigator.clipboard.writeText('${esc(u.tasks_url)}');toast('已复制任务端点','完成')">复制任务端点</button>`
+      : `<div class="d" style="color:var(--warn)">尚未配置对外地址。请在 .env 中设置 AWS_A2A_PUBLIC_BASE_URL 为外部可访问的根地址（如 https://agent.mycompany.com），重启后这里会显示可复制的端点。</div>`;
+  } catch (e) {}
+},
+
+mcp: async () => {
+  page.innerHTML = `<h2 class="vtitle">MCP 市场</h2>
+    <div class="vsub">接入 MCP Server，自动发现其工具供 Agent 自主调用；这里可查看所有已接入 MCP 的功能与工具</div>
+    <div class="card" style="margin-bottom:16px">
+      <div class="t">接入 MCP Server</div>
+      <div class="d">粘贴标准 MCP 配置 JSON（可直接从 MCP Server 文档复制），系统解析后逐个接入并发现工具。支持 url（HTTP/SSE）与 command+args（stdio）两种写法。</div>
+      <label class="f" style="margin-top:10px">MCP 配置 JSON</label>
+      <textarea id="mcp-config" style="min-height:150px;font-family:monospace;font-size:12px" placeholder='{
+  "mcpServers": {
+    "filesystem": {
+      "command": "npx",
+      "args": ["-y", "@modelcontextprotocol/server-filesystem", "/path"]
+    },
+    "remote-api": {
+      "url": "https://host/mcp"
+    }
+  }
+}'></textarea>
+      <div class="row" style="margin-top:10px"><button class="act" onclick="mcpImport()">解析并接入</button></div>
+      <div id="mcp-msg"></div>
+    </div>
+    <h3 class="sect">已接入的 MCP Server</h3>
+    <div id="mcp-list"></div>`;
+  await mcpLoad();
+},
+
+rag: async () => {
+  page.innerHTML = `<h2 class="vtitle">知识库</h2>
+    <div class="vsub">上传文件 → 识别体裁（可手动指定）→ 预览分块 → 确认入库，向量化入 Qdrant</div>
+    <div class="card" style="margin-bottom:16px">
+      <div class="t">上传文档</div>
+      <div class="d">支持 txt / md / pdf / docx / xlsx / csv / json / log。系统按内容体裁自动分块（合同按条款、FAQ按问答对…），你也可手动指定。</div>
+      <div class="row" style="margin-top:12px;align-items:center">
+        <input type="file" id="doc-file" accept=".txt,.md,.markdown,.pdf,.docx,.xlsx,.csv,.json,.log" style="display:none">
+        <button class="icon-btn" onclick="document.querySelector('#doc-file').click()" title="选择文件" aria-label="选择文件">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M12 19V5"></path><path d="m5 12 7-7 7 7"></path>
+          </svg>
+        </button>
+        <span id="doc-file-name" style="font-size:12.5px;color:var(--dim);flex:1">未选择文件（txt / md / pdf / docx / xlsx / csv / json / log）</span>
+        <button class="act" onclick="docPreview()" id="doc-preview-btn">选择文件后预览分块</button>
+      </div>
+      <div class="grid2" style="margin-top:12px">
+        <div><label class="f">文档体裁（手动指定优先于自动识别）</label>
+          <select id="doc-genre" style="width:100%" onchange="docToggleCustom()">
+            <option value="">自动识别（仅作提示，可修改）</option>
+            ${DOC_GENRES.map(g=>`<option value="${g.key}">${g.label}</option>`).join('')}
+          </select></div>
+        <div id="doc-params" class="hidden">
+          <label class="f">自定义分块参数（块长度 / 重叠度）</label>
+          <div class="row"><input id="doc-size" class="param-input" type="number" value="500" min="50" max="8000" title="块长度">
+            <input id="doc-overlap" class="param-input" type="number" value="50" min="0" max="2000" title="重叠度">
+            <span class="dim" style="font-size:12px">字符 / 字符</span></div>
+        </div>
+      </div>
+      <div id="doc-detect"></div>
+      <div id="doc-preview"></div>
+      <div id="doc-msg"></div>
+    </div>
+    <div class="card" style="margin-bottom:16px"><div class="t">检索测试</div>
+      <div class="row"><input id="q-in" placeholder="输入查询…" style="flex:1"><button class="act" onclick="qGo()">检索</button></div>
+      <div id="q-out"></div>
+    </div>
+    <h3 class="sect">已入库文档</h3><div id="doc-list"></div>
+    <div id="doc-detail"></div>`;
+  await refreshDocList();
+  $('#doc-file').onchange = () => {
+    const f = $('#doc-file').files?.[0];
+    $('#doc-file-name').textContent = f ? f.name : '未选择文件（txt / md / pdf / docx / xlsx / csv / json / log）';
+  };
+},
+
+obs: async () => {
+  const [usage, audit] = await Promise.all([api('/usage'), api('/audit?limit=30')]);
+  page.innerHTML = `<h2 class="vtitle">计量与审计</h2>
+    <div class="vsub">按主体归集用量，关键动作全量审计留痕</div>
+    <h3 class="sect">用量</h3>
+    ${usage.length ? `<table><tr><th>主体</th><th>类型</th><th>次数</th><th>输入 tok</th><th>输出 tok</th></tr>
+      ${usage.map(u=>`<tr><td>${esc(u.subject)}</td><td><span class="tag">${esc(u.kind)}</span></td><td>${u.count}</td><td>${u.input_tokens}</td><td>${u.output_tokens}</td></tr>`).join('')}</table>` : '<div class="empty">暂无用量数据</div>'}
+    <h3 class="sect">审计事件（最近 30 条）</h3>
+    ${audit.length ? `<table><tr><th>时间</th><th>动作</th><th>对象</th></tr>
+      ${audit.map(a=>`<tr><td style="color:var(--dim)">${esc(a.created_at.slice(0,19))}</td><td>${esc(a.action)}</td><td>${esc(a.target)}</td></tr>`).join('')}</table>` : '<div class="empty">暂无审计事件</div>'}
+    <div id="obs-extra"></div>`;
+},
+};
+
+/* ── MCP 市场 ── */
+async function mcpLoad() {
+  const box = $('#mcp-list'); if (!box) return;
+  const servers = await api('/mcp/servers').catch(() => []);
+  if (!servers.length) { box.innerHTML = '<div class="empty">还没有接入 MCP Server，用上方表单接入第一个</div>'; return; }
+  // 按分类分组
+  const groups = {};
+  for (const s of servers) (groups[s.category || '其他'] ||= []).push(s);
+  box.innerHTML = Object.entries(groups).sort((a,b)=>a[0].localeCompare(b[0])).map(([cat, items]) => `
+    <div style="margin-bottom:16px"><h3 class="sect">${esc(cat)} <span class="tag">${items.length}</span></h3>
+      <div class="ag-cards">${items.map(s => `
+        <div class="ag-card">
+          <div class="ag-head"><div class="ag-title">${esc(s.name)}</div>
+            <span class="tag ${s.status==='connected'?'ok':s.status==='error'?'bad':''}" title="${esc(s.error||'')}">${esc(s.status)}</span>
+            <button class="switch ${s.enabled ? 'on' : ''}" title="${s.enabled ? '停用' : '启用'}"
+              onclick="mcpToggle('${s.id}', ${!s.enabled})"></button></div>
+          <div class="ag-desc">${esc(s.description||'暂无简介')}</div>
+          ${s.status==='error' && s.error ? `<div class="d" style="font-size:11.5px;color:var(--bad);margin-top:4px;padding:6px 8px;background:var(--bad-soft);border-radius:6px">${esc(s.error.slice(0,160))}</div>` : ''}
+          <div class="ag-tags">
+            <span class="tag">${esc(s.transport.toUpperCase())}</span>
+            <span class="tag acc">${s.tool_count||0} 个工具</span>
+            ${s.server_name?`<span class="dim" style="font-size:11px">${esc(s.server_name)} v${esc(s.server_version)}</span>`:''}
+          </div>
+          <details style="margin-top:8px"><summary class="d" style="font-size:12px;cursor:pointer">查看工具（${s.tool_count||0}）</summary>
+            ${(s.tools||[]).length ? `<div style="margin-top:6px;max-height:180px;overflow-y:auto">${s.tools.map(t=>`
+              <div style="border:1px solid var(--line);border-radius:6px;padding:6px 8px;margin-bottom:4px">
+                <b style="font-size:12px;color:var(--acc)">${esc(t.name)}</b>
+                <div class="d" style="font-size:11.5px">${esc(t.description||'无说明')}</div>
+              </div>`).join('')}</div>` : '<div class="d" style="font-size:11.5px;margin-top:4px">无工具</div>'}
+          </details>
+          <div class="ag-actions">
+            <button class="pl-act" onclick="mcpRefresh('${s.id}', this)">刷新工具</button>
+            <button class="pl-act del" onclick="mcpDelete('${s.id}','${esc(s.name)}')">删除</button>
+          </div>
+        </div>`).join('')}</div></div>`).join('');
+}
+window.mcpImport = async () => {
+  const cfg = $('#mcp-config')?.value || '';
+  const box = $('#mcp-msg');
+  if (!cfg.trim()) { flashMsg(box, false, '请先粘贴 MCP 配置 JSON'); return; }
+  box.innerHTML = loading('正在解析配置并接入 MCP Server…');
+  try {
+    const r = await api('/mcp/import', {method:'POST', headers:{'content-type':'application/json'}, body: JSON.stringify({config: cfg})});
+    const ok = r.results.filter(x=>x.ok).length, fail = r.results.length - ok;
+    const detail = r.results.map(x => `${x.ok?'✓':'✗'} ${x.name}${x.ok?` (${x.tool_count} 工具)`:`: ${(x.error||'').slice(0,40)}`}`).join('；');
+    flashMsg(box, fail===0, `解析 ${r.imported} 个，成功 ${ok}，失败 ${fail}。${detail}`, 12000);
+    await mcpLoad();
+  } catch (e) { flashMsg(box, false, e.message, 8000); }
+};
+window.mcpRefresh = async (id, btn) => {
+  if (btn) { btn.disabled = true; btn.innerHTML = '<span class="spin" style="width:11px;height:11px;border-width:1.5px"></span> 刷新中…'; }
+  try {
+    const r = await api(`/mcp/servers/${id}/refresh`, {method:'POST'});
+    await mcpLoad();   // 卡片工具数/状态/清单同步更新
+    if (r.ok) toastQuick(`刷新成功，发现 ${r.tool_count} 个工具`, true);
+    else toastQuick(`刷新失败：${(r.error||'').slice(0,120)}`, false);
+  } catch (e) { toastQuick(`刷新失败：${e.message}`, false); }
+};
+window.mcpToggle = async (id, enabled) => {
+  try {
+    // 传入的 enabled 即为目标状态（模板里已用 !s.enabled 计算）
+    await api(`/mcp/servers/${id}/enabled`, {method:'PUT', headers:{'content-type':'application/json'},
+      body: JSON.stringify({enabled})});
+    await mcpLoad();
+  } catch (e) { toastQuick(e.message, false); }
+};
+window.mcpDelete = async (id, name) => {
+  if (!(await modal({title:'删除 MCP Server', message:`确定删除「${name}」？其工具将从 Agent 可用工具中移除。`, confirmText:'删除', danger:true}))) return;
+  try { await api(`/mcp/servers/${id}`, {method:'DELETE'}); await mcpLoad(); }
+  catch (e) { toastQuick(e.message, false); }
+};
+
+async function refreshPeers() {
+  const peers = await api('/a2a/peers').catch(() => []);
+  const box = $('#pe-list'); if (!box) return;
+  if (!peers.length) { box.innerHTML = '<div class="empty">暂无外部 Peer</div>'; return; }
+  // 按分类分组
+  const groups = {};
+  for (const p of peers) (groups[p.category || '其他'] ||= []).push(p);
+  box.innerHTML = Object.entries(groups).sort((a,b)=>a[0].localeCompare(b[0])).map(([cat, items]) => `
+    <div style="margin-bottom:16px">
+      <h3 class="sect">${esc(cat)} <span class="tag">${items.length}</span></h3>
+      <div class="ag-cards">${items.map(p => `
+        <div class="ag-card">
+          <div class="ag-head"><div class="ag-title">${esc(p.name)}</div><span class="tag ${p.direction==='inbound'?'ok':'acc'}">${esc(p.direction)}</span></div>
+          <div class="ag-desc">${esc(p.description||'暂无简介')}</div>
+          <div class="ag-tags"><span class="tag">${esc(p.base_url)}</span></div>
+          <div class="ag-actions"><button class="pl-act del" onclick="peerDelete('${esc(p.id)}','${esc(p.name)}')">删除</button></div>
+        </div>`).join('')}</div>
+    </div>`).join('');
+}
+window.peerDelete = async (id, name) => {
+  if (!(await modal({title:'删除 Peer', message:`确定删除外部 Peer「${name}」？`, confirmText:'删除', danger:true}))) return;
+  try { await api(`/a2a/peers/${id}`, {method:'DELETE'}); await refreshPeers(); }
+  catch (e) { toast(e.message, '删除失败'); }
+};
+async function refreshTraceList() {
+  const sel = $('#trace-select'); if (!sel) return;
+  const list = await api('/a2a/traces?limit=20').catch(() => []);
+  sel.innerHTML = list.length
+    ? '<option value="">选择一条调用链…</option>' + list.map(t =>
+        `<option value="${esc(t.trace_id)}">${esc(t.trace_id.slice(0,12))}… · ${t.task_count} 个任务 · ${esc(t.agents.join(', ')||'内部')} · ${esc(t.latest_at.slice(5,16))}</option>`).join('')
+    : '<option value="">暂无调用记录（在智能对话中发起任务后会出现）</option>';
+}
+async function traceQuery() {
+  const tid = ($('#trace-id')?.value || '').trim() || $('#trace-select')?.value;
+  const box = $('#trace-result'); if (!box) return;
+  if (!tid) { box.innerHTML = msg(false, '请输入或选择 trace ID'); return; }
+  try {
+    const d = await api(`/a2a/trace/${tid}`);
+    const row = (n, depth = 0) => `
+      <div style="margin-left:${depth*22}px;padding:8px 10px;border-left:2px solid var(--acc);margin-bottom:6px;background:var(--bg2);border-radius:0 8px 8px 0">
+        <div style="font-size:12.5px">
+          <b>${esc(n.agent || n.peer || '未知')}</b>
+          <span class="tag ${n.state==='completed'?'ok':n.state==='failed'?'bad':''}">${esc(n.state)}</span>
+          <span class="tag">${esc(n.direction)}</span>
+          ${n.duration_ms!=null?`<span class="tag">${n.duration_ms}ms</span>`:''}
+          <span style="color:var(--dim);font-size:11px">深度 ${n.depth}</span>
+        </div>
+        <div class="dim" style="font-size:11.5px;margin-top:3px">输入: ${esc(n.message||'-')}</div>
+        <div class="dim" style="font-size:11.5px">输出: ${esc(n.result||'-')}</div>
+      </div>` + (n.children || []).map(c => row(c, depth + 1)).join('');
+    box.innerHTML = `<div class="d" style="margin:10px 0">共 ${d.total} 个任务 · trace ${esc(tid.slice(0,16))}…</div>
+      ${d.tree.length ? d.tree.map(n => row(n)).join('') : '<div class="empty">该 trace 下无任务</div>'}`;
+  } catch (e) { box.innerHTML = msg(false, e.message); }
+}
+
+
+
+function renderPGChat() {
+  const body = $('#pg-body'); if (!body) return;
+  const hist = PG_CACHE[PG_AGENT_ID] || [];
+  body.innerHTML = hist.length
+    ? hist.map(m => {
+        if (m.role === 'pending') return `<div class="bubble ai"><span class="spin"></span> <span style="color:var(--dim);font-size:12.5px">Agent 思考中…</span></div>`;
+        return m.role === 'user'
+          ? `<div class="bubble me">${esc(m.content)}</div>`
+          : `<div class="bubble ai" style="${m.status==='failed'?'border-color:var(--bad)':''}">${esc(m.content)}
+               ${m.steps ? `<div class="dim" style="font-size:11px;margin-top:6px">${m.steps.map(s=>esc(s.step)).join(' → ')} · tokens ${m.token_usage?.input_tokens||0}→${m.token_usage?.output_tokens||0}</div>` : ''}
+             </div>`;
+      }).join('')
+    : '<div class="bubble ai">输入消息开始调试。这个 Agent 的对话会保留，直到你切换测试其他 Agent。</div>';
+  body.scrollTop = body.scrollHeight;
+  // 恢复该 Agent 的最近一次轨迹
+  const last = [...hist].reverse().find(m => m.role === 'assistant' && m.steps);
+  const tr = $('#pg-trace');
+  if (tr) tr.innerHTML = last ? renderPGTrace(last) : '';
+}
+function renderPGTrace(run) {
+  const steps = run.steps || [];
+  const isLoop = steps.some(s => s.thought !== undefined || s.observation !== undefined);
+  if (isLoop) {
+    // 独立智能体工作循环轨迹
+    const blocks = steps.map(s => `
+      <div class="card" style="margin-bottom:8px">
+        <div class="t" style="font-size:12.5px">步骤 ${s.step} · ${esc(s.action||'-')}
+          ${s.action==='final'?'<span class="tag ok">最终答案</span>':s.action&&s.action!=='fallback'?'<span class="tag acc">工具调用</span>':''}</div>
+        ${s.thought ? `<div class="d" style="font-size:12px;margin-top:4px"><b>思考：</b>${esc(s.thought)}</div>` : ''}
+        ${s.action_args && Object.keys(s.action_args).length ? `<div class="d" style="font-size:11.5px;color:var(--dim)">参数：${esc(JSON.stringify(s.action_args))}</div>` : ''}
+        ${s.observation ? `<div class="d" style="font-size:12px;margin-top:4px;white-space:pre-wrap"><b>工具结果：</b>${esc(s.observation.slice(0,300))}</div>` : ''}
+      </div>`).join('');
+    return `<h3 class="sect">工作轨迹 <span class="tag ${run.status==='succeeded'?'ok':'bad'}">${run.status}</span></h3>${blocks}`;
+  }
+  // 旧格式兼容
+  const rows = steps.map(s=>`<tr><td>${esc(s.step)}</td><td>${s.ms??''}ms</td><td style="color:var(--dim)">${esc(JSON.stringify(s.result||s.plugin||s.titles||s.model||s.error||''))}</td></tr>`).join('');
+  return `<h3 class="sect">执行轨迹 <span class="tag ${run.status==='succeeded'?'ok':'bad'}">${run.status}</span> <span class="tag">tokens ${run.token_usage?.input_tokens||0}→${run.token_usage?.output_tokens||0}</span></h3>
+    <div class="card"><table><tr><th>步骤</th><th>耗时</th><th>详情</th></tr>${rows}</table></div>`;
+}
+
+
+/* ── 聊天式创作 ── */
+window.chatStart = async () => {
+  if (chat.id) { $('#chat-mount').scrollIntoView({behavior:'smooth'}); return; }
+  $('#chat-mount').innerHTML = `<div class="chat-shell" style="margin-top:14px">
+    <div class="chat-head"><div class="dot"></div><div class="who">Skill 创作 Agent</div><div class="st" id="chat-state"></div></div>
+    <div class="chat-body" id="chat-body">${loading('创作 Agent 正在接入…')}</div>
+    <div class="chat-input">
+      <textarea id="chat-in" placeholder="描述你想创建的 Skill：帮助谁、做什么、输入输出…（Ctrl+Enter 发送）"></textarea>
+      <div class="chat-actions"><button class="act" id="chat-send" disabled>发送</button></div>
+    </div></div>`;
+  $('#chat-send').onclick = chatSend;
+  $('#chat-in').onkeydown = e => { if (e.key==='Enter' && (e.ctrlKey||e.metaKey)) chatSend(); };
+  try {
+    const d = await api('/skills/dialog', {method:'POST'});
+    chat = { id: d.dialog_id, state: d.state, draft: null };
+    $('#chat-mount').dataset.dialogId = d.dialog_id;
+    $('#chat-body').innerHTML = '';
+    aiSay(d.question);
+    renderState();
+    $('#chat-send').disabled = false;   // 会话就绪后才允许发送
+    $('#chat-in').focus();
+  } catch (e) { $('#chat-body').innerHTML = `<div class="bubble ai">${esc('启动失败: '+e.message)}</div>`; }
+};
+function renderState() {
+  const label = {clarify:'澄清需求中', draft:'草稿待确认', submitted:'已提交审核'}[chat.state] || chat.state;
+  $('#chat-state').innerHTML = `<span class="badge-state ${chat.state}">${label}</span>`;
+}
+function aiSay(text) {
+  $('#chat-body').insertAdjacentHTML('beforeend', `<div class="bubble ai">${esc(text)}</div>`);
+  $('#chat-body').scrollTop = 1e9;
+}
+function meSay(text) {
+  $('#chat-body').insertAdjacentHTML('beforeend', `<div class="bubble me">${esc(text)}</div>`);
+  $('#chat-body').scrollTop = 1e9;
+}
+async function chatSend() {
+  const inp = $('#chat-in');
+  const text = inp.value.trim();
+  if (!text) return;
+  // 会话创建是异步的：手快时等待按钮启用（最多 10s），不静默丢消息
+  const sendBtn = $('#chat-send');
+  for (let i = 0; i < 50 && sendBtn?.disabled; i++) await new Promise(r => setTimeout(r, 200));
+  const dialogId = chat.id || $('#chat-mount')?.dataset.dialogId || '';
+  if (!dialogId) { toast('会话尚未就绪，请稍后再试'); return; }
+  meSay(text); inp.value = '';
+  const thinking = document.createElement('div');
+  thinking.className = 'bubble ai'; thinking.innerHTML = loading('创作 Agent 正在思考…');
+  $('#chat-body').appendChild(thinking); $('#chat-body').scrollTop = 1e9;
+  try {
+    const d = await api(`/skills/dialog/${dialogId}/reply`, {method:'POST', headers:{'content-type':'application/json'}, body: JSON.stringify({text})});
+    chat.state = d.state; chat.draft = d;
+    thinking.remove();
+    if (d.state === 'draft' && d.draft_name) {
+      $('#chat-body').insertAdjacentHTML('beforeend', `
+        <div class="draft-card">
+          <div class="dt">草稿已生成</div>
+          <div class="kv"><b>name</b>${esc(d.draft_name)}</div>
+          <div class="kv"><b>description</b>${esc(d.draft_description)}</div>
+          <div class="kv"><b>instructions</b></div>
+          <pre style="max-height:160px;margin-top:4px">${esc(d.draft_instructions)}</pre>
+          <div class="row" style="margin:10px 0 0">
+            <button class="act" onclick="chatSubmit()">确认并提交审核</button>
+            <span style="font-size:12px;color:var(--dim);align-self:center">继续对话可修改草稿</span>
+          </div>
+        </div>`);
+    } else {
+      aiSay(d.history.at(-1)?.content || '（无回复）');
+    }
+    renderState(); $('#chat-body').scrollTop = 1e9;
+  } catch (e) { thinking.innerHTML = esc('出错了: ' + e.message); }
+}
+window.chatSubmit = async () => {
+  try {
+    const r = await api(`/skills/dialog/${$('#chat-mount').dataset.dialogId || chat.id}/submit`, {method:'POST'});
+    chat.state = 'submitted'; renderState();
+    aiSay(`草稿已通过统一审核流水线发布为 Skill「${r.skill}」，可在下方列表查看。`);
+    $('#chat-body').scrollTop = 1e9;
+    setTimeout(refreshSkillList, 500);
+  } catch (e) { aiSay('提交失败: ' + e.message); }
+};
+
+/* ── 其余动作 ── */
+/* ── Skill 市场：分类 / 卡片 / 详情 ── */
+let SKILL_CATS = [];          // 分类数据
+let SKILL_CAT = '全部';        // 当前分类
+
+window.refreshSkillCatalog = async () => {
+  const bar = document.querySelector('#sk-cats');
+  if (!bar) return;
+  try { SKILL_CATS = await api('/skills/categories'); } catch (e) { SKILL_CATS = []; }
+  const total = SKILL_CATS.reduce((n, c) => n + c.count, 0);
+  const chips = [{name: '全部', count: total}].concat(SKILL_CATS.map(c => ({name: c.name, count: c.count})));
+  bar.innerHTML = chips.map(c =>
+    `<button class="cat-chip ${c.name === SKILL_CAT ? 'on' : ''}" onclick="pickCategory('${esc(c.name)}')">
+       ${esc(c.name)} <span class="n">${c.count}</span></button>`).join('');
+  renderSkillCards();
+};
+window.pickCategory = (name) => { SKILL_CAT = name; refreshSkillCatalog(); };
+
+function renderSkillCards() {
+  const box = document.querySelector('#sk-list');
+  if (!box) return;
+  const cats = SKILL_CAT === '全部' ? SKILL_CATS : SKILL_CATS.filter(c => c.name === SKILL_CAT);
+  const items = cats.flatMap(c => c.skills.map(s => ({...s, category: c.name})));
+  if (!items.length) {
+    box.innerHTML = '<div class="empty">该分类下暂无 Skill</div>';
+    return;
+  }
+  box.innerHTML = `<div class="sk-grid">` + items.map(s => `
+    <div class="sk-card" onclick="openSkillDetail('${esc(s.name)}')">
+      <div class="st"><span class="sn">${esc(s.name)}</span>
+        <span class="tag">${esc(s.category)}</span></div>
+      <div class="sd">${esc(s.summary || s.description)}</div>
+      <div class="sm">
+        <span class="tag">${esc(s.source)}</span>
+        <span class="tag">${s.files_count} 个文件</span>
+        <button class="pl-act" style="margin-left:auto" title="导出到本机 DSH 使用"
+          onclick="event.stopPropagation();dshExportSkill('${esc(s.name)}')">导出到 DSH</button>
+      </div>
+      <div class="sk-tip">${esc(s.summary || s.description)}</div>
+    </div>`).join('') + '</div>';
+}
+
+function renderTree(nodes, prefix = '') {
+  if (!nodes || !nodes.length) return '<div class="dim" style="font-size:12px">无文件</div>';
+  const item = (n, base = prefix) => {
+    const full = base ? base + '/' + n.name : n.name;
+    if (n.type === 'file') {
+      return `<div class="fi file-item" onclick="openSkillFile('${esc(window.__skName)}', '${esc(full)}')" title="点击查看并编辑">
+        <span style="color:var(--acc)">${esc(n.name)}</span><span class="sz">${n.size ?? 0} B</span></div>`;
+    }
+    // 递归子目录时带上当前层路径
+    const childBase = full;
+    return `<div class="fi dir">${esc(n.name)}</div><div class="fl">${(n.children || []).map(c => item(c, childBase)).join('')}</div>`;
+  };
+  return `<div class="ftree">${nodes.map(n => item(n)).join('')}</div>`;
+}
+
+window.openSkillDetail = async (name) => {
+  let d;
+  try { d = await api(`/skills/${name}/detail`); }
+  catch (e) { toast(e.message, '打开失败'); return; }
+  window.__skName = name;
+  const refs = (d.references || []).length ? `<div class="d" style="margin-top:8px">参考资料：${d.references.map(r => `<span class="tag">${esc(r)}</span>`).join(' ')}</div>` : '';
+  const scripts = (d.scripts || []).length ? `<div class="d" style="margin-top:6px">脚本：${d.scripts.map(r => `<span class="tag warn">${esc(r)}</span>`).join(' ')}</div>` : '';
+  await modal({
+    title: d.name,
+    message: '',
+    confirmText: '关闭', cancelText: '',
+    html: `
+      <div class="d" style="margin-bottom:12px">${esc(d.description)}</div>
+      <div style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:12px">
+        <span class="tag acc">${esc(d.category)}</span>
+        <span class="tag">${esc(d.source)}</span>
+        <span class="tag">${esc(d.status)}</span>
+      </div>
+      <div style="display:flex;align-items:center;gap:8px;margin-bottom:6px">
+        <span style="font-size:12.5px;font-weight:600">文件结构（点击文件可查看与编辑）</span>
+        <button class="icon-btn trash" style="margin-left:auto" title="删除此 Skill" aria-label="删除此 Skill" onclick="deleteSkillFromDetail('${esc(name)}')">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M3 6h18"></path><path d="M8 6V4a1 1 0 0 1 1-1h6a1 1 0 0 1 1 1v2"></path>
+            <path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"></path>
+            <path d="M10 11v6"></path><path d="M14 11v6"></path>
+          </svg>
+        </button>
+      </div>
+      ${renderTree(d.tree)}
+      ${refs}${scripts}
+      <div class="d" style="margin-top:8px;font-size:11px;color:var(--dim)">SHA256 ${esc((d.sha256 || '').slice(0, 32))}</div>`,
+  });
+};
+
+window.openSkillFile = async (name, path) => {
+  let f;
+  try { f = await api(`/skills/${name}/file?path=${encodeURIComponent(path)}`); }
+  catch (e) { toast(e.message, '读取失败'); return; }
+  const result = await modal({
+    title: '编辑文件',
+    confirmText: '保存', cancelText: '取消',
+    collect: {content: '#sk-edit-content'},
+    html: `
+      <div class="d" style="margin-bottom:8px">Skill <b>${esc(name)}</b> / ${esc(path)}</div>
+      <textarea id="sk-edit-content" style="min-height:280px;font-family:monospace;font-size:12px">${esc(f.content)}</textarea>
+      <div class="d" style="margin-top:6px;font-size:11px;color:var(--dim)">内容为空并保存将删除该文件</div>`,
+  });
+  if (!result || result.content === undefined) return;
+  try {
+    const r = await api(`/skills/${name}/files`, {
+      method: 'PUT', headers: {'content-type': 'application/json'},
+      body: JSON.stringify({changes: {[path]: result.content}}),
+    });
+    document.querySelectorAll('.modal-mask').forEach(m => m.remove());
+    // 直接重开详情作为保存反馈（不再弹 toast 造成多层弹框叠加）
+    setTimeout(() => openSkillDetail(name), 200);
+  } catch (e) { toast(e.message, '保存失败'); }
+};
+
+window.deleteSkillFromDetail = async (name) => {
+  if (!(await modal({title:'删除 Skill', message:`确定删除「${name}」？此操作不可恢复。`, confirmText:'删除', danger:true}))) return;
+  try {
+    await api(`/skills/${name}`, {method:'DELETE'});
+    document.querySelectorAll('.modal-mask').forEach(m => m.remove());
+    toast(`已删除 Skill「${name}」`, '已删除');
+    setTimeout(refreshSkillCatalog, 400);
+  } catch (e) { toast(e.message, '删除失败'); }
+};
+
+
+/* ── 上传（zip / md 两种）── */
+window.bindSkillUpload = () => {
+  const inp = document.querySelector('#sk-file');
+  if (inp) inp.onchange = () => {
+    const f = inp.files[0];
+    const label = document.querySelector('#sk-file-name');
+    if (label) label.textContent = f ? f.name : '未选择文件（.zip 或 .md）';
+    const box = document.querySelector('#sk-up-msg');
+    if (box) box.innerHTML = '';
+  };
+};
+window.skUpload = async () => {
+  const f = document.querySelector('#sk-file')?.files[0];
+  const box = document.querySelector('#sk-up-msg');
+  if (!f) { if (box) box.innerHTML = msg(false, '请先选择文件'); return; }
+  const isMd = f.name.toLowerCase().endsWith('.md');
+  const fd = new FormData(); fd.append('file', f);
+  if (box) box.innerHTML = loading('上传并校验中…');
+  try {
+    const url = isMd ? '/skills/upload-md' : '/skills/upload';
+    const r = await fetch(url, {method: 'POST', body: fd});
+    const b = await r.json();
+    if (!r.ok) throw new Error(b.detail?.rule + ': ' + b.detail?.message + (b.detail?.suggestion ? '（' + b.detail.suggestion + '）' : ''));
+    if (box) box.innerHTML = msg(true, `上传成功：${b.name}（分类：${b.category || '其他'}）`);
+    await refreshSkillCatalog();
+    const inp = document.querySelector('#sk-file'); if (inp) inp.value = '';
+    const label = document.querySelector('#sk-file-name'); if (label) label.textContent = '未选择文件（.zip 或 .md）';
+  } catch (e) {
+    if (box) box.innerHTML = msg(false, e.message);
+  }
+};
+
+
+/* ── 插件市场：管理（安装/启停/修改/卸载）── */
+const PL_LABELS = {MemoryProvider:'记忆', ChunkingStrategy:'RAG分块', IntentRecognizer:'意图识别',
+                   ContextCompressor:'上下文压缩', WorkflowNode:'工作流节点'};
+const PL_SEM = {single:['单槽位','acc'], pipeline:['管道','warn'], graph:['图引用','']};
+let PLUGINS = [];
+
+window.refreshPlugins = async () => {
+  if (!document.querySelector('#pl-list')) return;
+  try { PLUGINS = await api('/plugins/managed'); } catch (e) { PLUGINS = []; }
+  renderPlugins();
+};
+function renderPlugins() {
+  const box = document.querySelector('#pl-list');
+  if (!box) return;
+  if (!PLUGINS.length) { box.innerHTML = '<div class="empty">暂无插件</div>'; return; }
+  box.innerHTML = PLUGINS.map(p => {
+    const [sl, sc] = PL_SEM[p.slot_semantics] || [p.slot_semantics, ''];
+    const src = {builtin:'内置', market:'市场', github:'GitHub', local:'本地'}[p.source] || p.source;
+    const cfgCount = Object.keys(p.config_schema || {}).length;
+    return `<div class="pl-card ${p.enabled ? '' : 'off'}" data-key="${esc(p.key)}">
+      <div class="pl-head">
+        <span class="pn" title="${esc(p.key)}">${esc(p.name)}</span>
+        <button class="switch ${p.enabled ? 'on' : ''}" title="${p.enabled ? '停用' : '启用'}"
+          onclick="plToggle('${esc(p.key)}', ${!p.enabled})"></button>
+      </div>
+      <div class="pl-desc">${esc(p.description || '暂无说明')}</div>
+      <div class="pl-meta">
+        <span class="tag acc">${esc(PL_LABELS[p.extension_point] || p.extension_point)}</span>
+        <span class="tag ${sc}">${sl}</span>
+        <span class="tag">${esc(src)}</span>
+        <span class="tag">v${esc(p.version)}</span>
+      </div>
+      <div class="pl-desc" style="min-height:0;font-size:11px;color:var(--dim)" title="key 是插件的唯一标识，程序用它引用插件；上面的名称才是显示名">
+        key: ${esc(p.key)}（唯一标识）
+      </div>
+      <div class="pl-foot">
+        <button class="pl-act" onclick="plDetail('${esc(p.key)}')">详情/机制</button>
+        <button class="pl-act" onclick="plEdit('${esc(p.key)}')">修改</button>
+        <button class="pl-act" title="导出为 DSH bundle" onclick="dshExportPlugin('${esc(p.key)}')">导出 DSH</button>
+        <button class="pl-act del" style="margin-left:auto" onclick="plUninstall('${esc(p.key)}')">卸载</button>
+      </div>
+    </div>`;
+  }).join('');
+}
+window.plToggle = async (key, enabled) => {
+  try { await api(`/plugins/${key}/enabled`, {method:'PUT', headers:{'content-type':'application/json'}, body: JSON.stringify({enabled})}); await refreshPlugins(); }
+  catch (e) { toast(e.message, '操作失败'); }
+};
+window.plUninstall = async (key) => {
+  if (!(await modal({title:'卸载插件', message:`确定卸载插件「${key}」？`, confirmText:'卸载', danger:true}))) return;
+  try { await api(`/plugins/${key}`, {method:'DELETE'}); toast(`已卸载 ${key}`, '完成'); await refreshPlugins(); }
+  catch (e) { toast(e.message, '卸载失败'); }
+};
+window.plDetail = async (key) => {
+  const p = PLUGINS.find(x => x.key === key);
+  if (!p) return;
+  let behaviors = {};
+  try { behaviors = await api('/plugins/behaviors'); } catch (e) {}
+  await modal({
+    title: p.name, confirmText: '关闭', cancelText: '',
+    html: `
+      <div class="d" style="margin-bottom:8px">${esc(p.description || '暂无说明')}</div>
+      <div style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:12px">
+        <span class="tag acc">${esc(PL_LABELS[p.extension_point]||p.extension_point)}</span>
+        <span class="tag">${esc(p.source)}</span><span class="tag">v${esc(p.version)}</span>
+      </div>
+      <div style="font-size:12.5px;font-weight:600;margin-bottom:4px">运行机制（如何驱动 LLM）</div>
+      <div class="d" style="line-height:1.7">${esc(p.mechanism || '该插件按 Runtime 标准步骤执行，暂无机制说明。')}</div>
+      <div style="font-size:12.5px;font-weight:600;margin:12px 0 4px">标识说明</div>
+      <div class="d">key 是插件的唯一标识（程序用它引用），不是显示名称。名称才是给人看的。</div>
+      <div style="font-size:12.5px;font-weight:600;margin:12px 0 4px">当前 config</div>
+      <pre style="max-height:130px">${esc(JSON.stringify(p.config || {}, null, 2))}</pre>
+      <div style="font-size:12.5px;font-weight:600;margin:12px 0 4px">可用的配置驱动行为</div>
+      ${Object.entries(behaviors).map(([b, d]) => `<div class="d" style="font-size:12px"><b>${esc(b)}</b>：${esc(d)}</div>`).join('')}`,
+  });
+};
+window.plEdit = async (key) => {
+  const p = PLUGINS.find(x => x.key === key);
+  if (!p) return;
+  const r = await modal({
+    title:'修改插件', confirmText:'保存', cancelText:'取消',
+    collect: {name:'#pl-e-name', description:'#pl-e-desc', mechanism:'#pl-e-mech'},
+    html: `<div class="d" style="margin-bottom:8px">插件 ${esc(key)}（唯一标识，不可修改）</div>
+      <label class="f">显示名称</label><input id="pl-e-name" value="${esc(p.name)}">
+      <label class="f">功能简介（能做什么）</label><textarea id="pl-e-desc">${esc(p.description)}</textarea>
+      <label class="f">运行机制（如何驱动 LLM）</label><textarea id="pl-e-mech" style="min-height:120px">${esc(p.mechanism)}</textarea>`,
+  });
+  if (!r) return;
+  try { await api(`/plugins/${key}`, {method:'PUT', headers:{'content-type':'application/json'},
+      body: JSON.stringify({name:r.name, description:r.description, mechanism:r.mechanism})}); await refreshPlugins(); }
+  catch (e) { toast(e.message, '保存失败'); }
+};
+/* ── DSH 导出 ── */
+window.dshExportSkill = async (name) => {
+  try {
+    const r = await api(`/dsh/export/skills/${name}`, {method:'POST'});
+    toast(`已导出到 DSH：${r.path}`, '导出成功');
+  } catch (e) { toast(e.message, '导出失败'); }
+};
+window.dshExportPlugin = async (key) => {
+  try {
+    const r = await api(`/dsh/export/plugins/${key}`, {method:'POST'});
+    toast(`已导出为 DSH bundle：${r.bundle}（路径 ${r.path}）`, '导出成功');
+  } catch (e) { toast(e.message, '导出失败'); }
+};
+
+window.plDesignGuide = async () => {
+  let behaviors = {};
+  try { behaviors = await api('/plugins/behaviors'); } catch (e) {}
+  await modal({
+    title: '如何设计插件', confirmText: '关闭', cancelText: '',
+    html: `
+      <div class="d" style="line-height:1.7">
+        插件由「清单 + 配置」组成，不需要写代码。步骤如下：<br>
+        1. 新建一个目录，写入 <b>plugin.json</b> 清单（示例见下）。<br>
+        2. 把目录路径填到下方「从本地目录安装」，点击安装。<br>
+        3. 在插件卡片上可修改简介、运行机制与配置，启停或卸载。<br>
+        4. 组装 Agent 时勾选它，运行时自动按 behavior 执行。
+      </div>
+      <div style="font-size:12.5px;font-weight:600;margin:12px 0 4px">plugin.json 示例</div>
+      <pre style="max-height:200px">${esc(JSON.stringify({
+        key: 'my-intent-plugin', name: '我的意图插件',
+        description: '根据关键词识别用户意图', extension_point: 'IntentRecognizer',
+        slot_semantics: 'single', version: '1.0.0', author: 'me',
+        config: {behavior: 'intent_keywords', rules: {search: ['查', '找'], chat: []}}
+      }, null, 2))}</pre>
+      <div style="font-size:12.5px;font-weight:600;margin:12px 0 4px">字段说明</div>
+      <div class="d" style="font-size:12px">key：唯一标识（字母数字连字符），程序引用用；name：显示名称；description：能做什么；extension_point：扩展点（决定装到 Agent 哪个槽位）；mechanism：运行机制说明（可安装后在卡片修改）；config.behavior：驱动行为。</div>
+      <div style="font-size:12.5px;font-weight:600;margin:12px 0 4px">可用的 behavior</div>
+      ${Object.entries(behaviors).map(([b, d]) => `<div class="d" style="font-size:12px"><b>${esc(b)}</b>：${esc(d)}</div>`).join('')}
+      <div class="d" style="margin-top:12px;font-size:12px;color:var(--dim)">需要更复杂的逻辑时，可在 config 中声明 rules/prompt 等参数，或未来接入代码型插件沙箱。</div>`,
+  });
+};
+window.plInstall = async () => {
+  const key = document.querySelector('#pl-key')?.value.trim();
+  const url = document.querySelector('#pl-url')?.value.trim() || '';
+  const box = document.querySelector('#pl-install-msg');
+  if (!key) { if (box) box.innerHTML = msg(false, '请填写插件 key'); return; }
+  const source = url ? 'github' : 'market';
+  const r = await modal({
+    title:'安装插件', confirmText:'安装', cancelText:'取消',
+    collect: {name:'#pl-i-name', desc:'#pl-i-desc'},
+    html: `<label class="f">显示名称</label><input id="pl-i-name" value="${esc(key)}">
+      <label class="f">功能简介</label><textarea id="pl-i-desc" placeholder="这个插件能做什么"></textarea>`,
+  });
+  if (!r) return;
+  try {
+    await api('/plugins/install', {method:'POST', headers:{'content-type':'application/json'},
+      body: JSON.stringify({key, name:r.name, description:r.desc, source, source_url:url})});
+    if (box) box.innerHTML = msg(true, `已安装插件 ${key}`);
+    await refreshPlugins();
+  } catch (e) { if (box) box.innerHTML = msg(false, e.message); }
+};
+window.plInstallLocal = async () => {
+  const directory = document.querySelector('#pl-dir')?.value.trim();
+  const box = document.querySelector('#pl-install-msg');
+  if (!directory) { if (box) box.innerHTML = msg(false, '请填写插件目录'); return; }
+  try {
+    await api('/plugins/install-local', {method:'POST', headers:{'content-type':'application/json'},
+      body: JSON.stringify({directory})});
+    if (box) box.innerHTML = msg(true, '已从本地目录安装插件');
+    await refreshPlugins();
+  } catch (e) { if (box) box.innerHTML = msg(false, e.message); }
+};
+
+
+/* ── Agent 市场：独立下拉菜单（搜索+推荐）、团队、卡片列表 ── */
+let AG_EDIT_ID = null;       // 非空表示"重新组装"模式
+let TEAM_EDIT_ID = null;     // 非空表示"编辑团队"模式
+let AG_SKILLS = [];          // 已选 Skill
+let AG_PLUGINS = {};         // 已选插件 {slot: key}
+const SLOT_OF = {MemoryProvider:'memory', ChunkingStrategy:'chunking',
+                 IntentRecognizer:'intent', ContextCompressor:'compress', WorkflowNode:'workflow'};
+
+window.loadAgentPickers = async () => {
+  const sm = document.querySelector('#ag-skill-menu'), pm = document.querySelector('#ag-plugin-menu');
+  if (!sm || !pm) return;
+  sm.innerHTML = `<input id="ag-skill-q" placeholder="搜索 Skill…" style="width:100%">
+    <div class="menu-list" id="ag-skill-list"></div>`;
+  pm.innerHTML = `<input id="ag-plugin-q" placeholder="搜索插件…" style="width:100%">
+    <div class="menu-list" id="ag-plugin-list"></div>`;
+  await refreshMenuItems();
+  $('#ag-skill-q').oninput = refreshMenuItems;
+  $('#ag-plugin-q').oninput = refreshMenuItems;
+  $('#ag-d').oninput = debounce(refreshRecommend, 500);
+};
+function debounce(fn, ms) { let t; return (...a) => { clearTimeout(t); t = setTimeout(() => fn(...a), ms); }; }
+
+async function refreshMenuItems() {
+  const sq = ($('#ag-skill-q')?.value || '').toLowerCase();
+  const pq = ($('#ag-plugin-q')?.value || '').toLowerCase();
+  const skills = await api('/skills').catch(() => []);
+  const plugins = await api('/plugins/managed').catch(() => []);
+  const sl = $('#ag-skill-list'), pl = $('#ag-plugin-list');
+  if (sl) sl.innerHTML = skills.filter(s => !sq || (s.name+s.description).toLowerCase().includes(sq))
+    .map(s => `<button class="menu-item" onclick="agAddSkill('${esc(s.name)}')">${esc(s.name)} <span class="dim">${esc((s.description||'').slice(0,40))}</span></button>`).join('')
+    || '<div class="dim" style="padding:8px">无匹配 Skill</div>';
+  if (pl) pl.innerHTML = plugins.filter(p => p.enabled && (!pq || (p.key+p.name+p.description).toLowerCase().includes(pq)))
+    .map(p => `<button class="menu-item" onclick="agAddPlugin('${esc(p.key)}','${esc(p.extension_point)}')">${esc(p.name)} <span class="tag">${esc(p.key)}</span></button>`).join('')
+    || '<div class="dim" style="padding:8px">无匹配插件</div>';
+}
+async function refreshRecommend() {
+  const desc = $('#ag-d')?.value.trim();
+  if (!desc) return;
+  const rs = await api('/agents/recommend/skills', {method:'POST', headers:{'content-type':'application/json'}, body: JSON.stringify({description: desc, limit: 3})}).catch(() => []);
+  const rp = await api('/agents/recommend/plugins', {method:'POST', headers:{'content-type':'application/json'}, body: JSON.stringify({description: desc, limit: 3})}).catch(() => []);
+  const box = $('#ag-recommend') || (() => { const d=document.createElement('div'); d.id='ag-recommend'; d.className='recommend'; $('#ag-p').after(d); return d; })();
+  box.innerHTML = `<div class="rt">根据描述推荐</div>` +
+    (rs.length || rp.length ? rs.map(s=>`<button class="chip" onclick="agAddSkill('${esc(s.name)}')">+ ${esc(s.name)}</button>`).join('') +
+      rp.map(p=>`<button class="chip" onclick="agAddPlugin('${esc(p.key)}','${esc(p.extension_point)}')">+ ${esc(p.name)}</button>`).join('')
+      : '<span class="dim">暂无匹配推荐</span>');
+}
+window.agAddSkill = name => {
+  if (!AG_SKILLS.includes(name)) AG_SKILLS.push(name);
+  renderPicked();
+};
+window.agAddPlugin = (key, ep) => {
+  const slot = SLOT_OF[ep] || 'workflow';
+  AG_PLUGINS[slot] = key;
+  renderPicked();
+};
+function renderPicked() {
+  const sp = $('#ag-skills-picked'), pp = $('#ag-plugins-picked');
+  if (sp) sp.innerHTML = AG_SKILLS.map(s=>`<span class="chip on">${esc(s)} <button onclick="event.stopPropagation();agRemoveSkill('${esc(s)}')">×</button></span>`).join('');
+  if (pp) pp.innerHTML = Object.entries(AG_PLUGINS).map(([slot,k])=>`<span class="chip on">${esc(slot)}: ${esc(k)} <button onclick="event.stopPropagation();agRemovePlugin('${esc(slot)}')">×</button></span>`).join('');
+}
+window.agRemoveSkill = name => { AG_SKILLS = AG_SKILLS.filter(x=>x!==name); renderPicked(); };
+window.agRemovePlugin = slot => { delete AG_PLUGINS[slot]; renderPicked(); };
+
+function resetAgentForm() {
+  AG_EDIT_ID = null; AG_SKILLS = []; AG_PLUGINS = {};
+  ['ag-n','ag-d','ag-p'].forEach(id => { if ($('#'+id)) $('#'+id).value=''; });
+  renderPicked();
+  const note = $('#ag-edit-note'); if (note) note.textContent='';
+  const cancel = $('#ag-cancel-btn'); if (cancel) cancel.classList.add('hidden');
+  const btn = $('#ag-submit-btn'); if (btn) btn.textContent='校验并发布';
+}
+
+window.agCreate = async () => {
+  const body = {
+    name: $('#ag-n').value.trim(), description: $('#ag-d').value.trim(),
+    system_prompt: $('#ag-p').value, skill_keys: AG_SKILLS, plugin_keys: AG_PLUGINS,
+  };
+  const box = $('#ag-msg');
+  try {
+    let a;
+    if (AG_EDIT_ID) {
+      a = await api(`/agents/${AG_EDIT_ID}`, {method:'PUT', headers:{'content-type':'application/json'}, body: JSON.stringify(body)});
+      flashMsg(box, true, `重新组装成功：${a.name}`);
+    } else {
+      a = await api('/agents', {method:'POST', headers:{'content-type':'application/json'}, body: JSON.stringify(body)});
+      flashMsg(box, true, `发布成功：${a.name} v${a.version}`);
+    }
+    resetAgentForm();
+    await refreshAgentList();
+  } catch (e) { flashMsg(box, false, e.message); }
+};
+window.agCancelEdit = () => { resetAgentForm(); clearMsg($('#ag-msg')); };
+
+window.agEdit = async (id) => {
+  const a = (await api('/agents').catch(()=>[])).find(x=>x.id===id);
+  if (!a) return;
+  AG_EDIT_ID = id; AG_SKILLS = [...(a.skill_keys||[])]; AG_PLUGINS = {...(a.plugin_keys||{})};
+  $('#ag-n').value = a.name; $('#ag-d').value = a.description||''; $('#ag-p').value = a.system_prompt||'';
+  renderPicked();
+  const note = $('#ag-edit-note'); if (note) note.textContent=`正在重新组装「${a.name}」`;
+  const cancel = $('#ag-cancel-btn'); if (cancel) cancel.classList.remove('hidden');
+  const btn = $('#ag-submit-btn'); if (btn) btn.textContent='保存修改';
+  window.scrollTo({top:0, behavior:'smooth'});
+};
+window.agDelete = async (id) => {
+  const a = (await api('/agents').catch(()=>[])).find(x=>x.id===id);
+  if (!a) return;
+  if (!(await modal({title:'删除 Agent', message:`确定删除「${a.name}」？`, confirmText:'删除', danger:true}))) return;
+  try { await api(`/agents/${id}`, {method:'DELETE'}); toast(`已删除 ${a.name}`, '完成'); await refreshAgentList(); }
+  catch (e) { toast(e.message, '删除失败'); }
+};
+
+window.refreshAgentList = async () => {
+  const el = $('#ag-list'); if (!el) return;
+  const list = await api('/agents').catch(()=>[]);
+  // #ag-list 本身就是 .ag-cards 网格，不要再包一层（否则卡片被挤到 1/3 宽）
+  el.innerHTML = list.length ? list.map(a => {
+    const deps = a.skill_keys.map(s=>`<span class="tag acc">${esc(s)}</span>`).join(' ')
+      + Object.entries(a.plugin_keys).map(([k,v])=>`<span class="tag">${esc(k)}: ${esc(v)}</span>`).join(' ');
+    return `<div class="ag-card">
+      <div class="ag-head"><div class="ag-title">${esc(a.name)}</div><span class="tag">v${a.version}</span></div>
+      <div class="ag-desc">${esc(a.description||'暂无介绍')}</div>
+      <div class="ag-tags">${deps||'<span class="dim">无依赖</span>'}</div>
+      <div class="ag-actions">
+        <button class="pl-act" onclick="agPlay('${a.id}')">Playground</button>
+        <button class="pl-act" onclick="agEval('${a.id}',this)">评测</button>
+        <button class="pl-act" onclick="agCard('${esc(a.name)}',this)">Agent Card</button>
+        <button class="pl-act" onclick="agEdit('${a.id}')">重新组装</button>
+        <button class="pl-act del" onclick="agDelete('${a.id}')">删除</button>
+      </div><div class="res"></div></div>`;
+  }).join('') : '<div class="empty">还没有 Agent，用上方表单组装第一个</div>';
+};
+window.agCard = async (name, btn) => {
+  const card = btn.closest('.ag-card');
+  if (!card) return;
+  // 若已打开则关闭（恢复信息卡）
+  const existing = card.querySelector('.card-overlay');
+  if (existing) { existing.remove(); return; }
+  let c;
+  try { c = await api(`/a2a/cards/${name}`); }
+  catch (e) { toast(e.message, '读取 Card 失败'); return; }
+  const overlay = document.createElement('div');
+  overlay.className = 'card-overlay';
+  overlay.innerHTML = `
+    <div class="co-head"><span>Agent Card</span><button class="co-close" title="关闭" onclick="this.closest('.card-overlay').remove()">×</button></div>
+    <pre>${esc(JSON.stringify(c, null, 2))}</pre>`;
+  card.appendChild(overlay);
+};
+window.agEval = async (id, btn) => {
+  btn.disabled = true; btn.textContent='评测中…';
+  try { const r = await api(`/agents/${id}/eval`, {method:'POST'});
+    btn.parentElement.nextElementSibling.innerHTML = msg(r.passed===r.total, `评测 ${r.passed}/${r.total} 通过`); }
+  catch (e) { btn.parentElement.nextElementSibling.innerHTML = msg(false, e.message); }
+  btn.disabled=false; btn.textContent='评测';
+};
+window.agPlay = id => { window.__pgTarget = id; goto('playground'); };
+
+/* ── Agent 团队 ── */
+window.refreshTeamCandidates = async () => {
+  const mb = $('#tm-members');
+  if (!mb) return;
+  const agents = await api('/agents').catch(()=>[]);
+  // 保留已勾选状态，避免重建时丢失用户选择
+  const checked = new Set([...mb.querySelectorAll('.tm-member:checked')].map(x=>x.value));
+  mb.innerHTML = agents.map(a=>`<label class="member-opt" title="${esc(a.description||'')}">
+    <input type="checkbox" class="tm-member" value="${esc(a.name)}" ${checked.has(a.name)?'checked':''}>
+    <span class="mo-name">${esc(a.name)}</span>
+    <span class="mo-desc">${esc(a.description||'暂无介绍')}</span>
+  </label>`).join('') || '<span class="dim" style="padding:8px">暂无 Agent</span>';
+};
+window.refreshTeams = async () => {
+  const box = $('#tm-list'); if (!box) return;
+  const teams = await api('/agents/teams').catch(()=>[]);
+  box.innerHTML = teams.length ? teams.map(t=>`
+    <div class="ag-card">
+      <div class="ag-head"><div class="ag-title">${esc(t.name)}</div><span class="tag acc">主理: ${esc(t.leader)}</span></div>
+      <div class="ag-desc">${esc(t.description||'暂无描述')}</div>
+      <div class="ag-tags"><span class="dim" style="font-size:12px">成员：</span>${(t.members||[]).map(m=>`<span class="tag ok">${esc(m)}</span>`).join('')||'<span class="dim">无</span>'}</div>
+      <div class="ag-actions">
+        <button class="pl-act" onclick="teamEdit('${esc(t.name)}')">编辑成员/信息</button>
+        <button class="pl-act del" onclick="teamDelete('${esc(t.name)}')">删除团队</button>
+      </div>
+    </div>`).join('') : '<div class="empty">还没有团队，用上方表单创建</div>';
+};
+window.teamCreate = async () => {
+  const members = [...document.querySelectorAll('.tm-member:checked')].map(x=>x.value);
+  const name = $('#tm-n').value.trim();
+  const body = {name, description: $('#tm-d').value.trim(), leader: $('#tm-leader').value.trim(), members};
+  const box = $('#tm-msg');
+  try {
+    let r;
+    if (TEAM_EDIT_ID) {
+      r = await api(`/agents/teams/${TEAM_EDIT_ID}`, {method:'PATCH', headers:{'content-type':'application/json'}, body: JSON.stringify(body)});
+      flashMsg(box, true, `团队更新成功：${r.name}（${members.length} 个成员）`);
+    } else {
+      r = await api('/agents/teams', {method:'POST', headers:{'content-type':'application/json'}, body: JSON.stringify(body)});
+      flashMsg(box, true, `团队创建成功：${r.name}（主理 ${r.leader}${r.auto_created_leader?'，已自动创建':''}，${members.length} 个成员）`);
+    }
+    resetTeamForm();
+    await refreshTeams();
+    await refreshAgentList();
+    await refreshTeamCandidates();
+  } catch (e) { flashMsg(box, false, e.message); }
+};
+function resetTeamForm() {
+  TEAM_EDIT_ID = null;
+  ['tm-n','tm-d','tm-leader'].forEach(id => { if ($('#'+id)) $('#'+id).value=''; });
+  const ni = $('#tm-n'); if (ni) ni.disabled = false;
+  document.querySelectorAll('.tm-member:checked').forEach(x=>x.checked=false);
+  const note = $('#tm-edit-note'); if (note) note.textContent='';
+  const btn = $('#tm-submit-btn'); if (btn) btn.textContent='创建团队';
+  const cancel = $('#tm-cancel-btn'); if (cancel) cancel.classList.add('hidden');
+}
+window.teamEdit = async name => {
+  const teams = await api('/agents/teams').catch(()=>[]);
+  const t = teams.find(x=>x.name===name);
+  if (!t) return;
+  await refreshTeamCandidates();
+  TEAM_EDIT_ID = name;
+  $('#tm-n').value = t.name; $('#tm-n').disabled = true;
+  $('#tm-d').value = t.description||'';
+  $('#tm-leader').value = t.leader||'';
+  document.querySelectorAll('.tm-member').forEach(x => { x.checked = (t.members||[]).includes(x.value); });
+  const note = $('#tm-edit-note'); if (note) note.textContent=`正在编辑团队「${name}」`;
+  const btn = $('#tm-submit-btn'); if (btn) btn.textContent='保存修改';
+  const cancel = $('#tm-cancel-btn'); if (cancel) cancel.classList.remove('hidden');
+  window.scrollTo({top: document.body.scrollHeight, behavior:'smooth'});
+};
+window.teamCancelEdit = () => { $('#tm-n').disabled = false; resetTeamForm(); clearMsg($('#tm-msg')); };
+window.teamDelete = async name => {
+  if (!(await modal({title:'删除团队', message:`确定删除团队「${name}」？`, confirmText:'删除', danger:true}))) return;
+  try {
+    await api(`/agents/teams/${name}`, {method:'DELETE'});
+    clearMsg($('#tm-msg'));   // 清除可能存在的"创建成功"等旧提示
+    if (TEAM_EDIT_ID === name) resetTeamForm();
+    await refreshTeams();
+  }
+  catch (e) { flashMsg($('#tm-msg'), false, e.message); }
+};
+
+
+async function pgRun() {
+  const inp = $('#pg-in'), text = inp.value.trim();
+  if (!text) return;
+  const aid = $('#pg-ag')?.value || PG_AGENT_ID;
+  if (!aid) return;
+  inp.value = '';
+  // 写入该 Agent 的缓存（页面切换不丢）
+  const hist = PG_CACHE[aid] || (PG_CACHE[aid] = []);
+  hist.push({role:'user', content:text});
+  const pending = {role:'pending'};
+  hist.push(pending);   // 思考中占位：显示转圈
+  renderPGChat();
+  try {
+    const run = await api(`/agents/${aid}/playground`, {method:'POST', headers:{'content-type':'application/json'}, body: JSON.stringify({input: text})});
+    hist.splice(hist.indexOf(pending), 1);   // 移除占位
+    hist.push({role:'assistant', content: run.output_text || ('运行失败: ' + run.error),
+               status: run.status, steps: run.steps, token_usage: run.token_usage});
+    if (PG_AGENT_ID === aid) renderPGChat();   // 仍在该 Agent 的对话才刷新视图
+  } catch (e) {
+    hist.splice(hist.indexOf(pending), 1);
+    hist.push({role:'assistant', content: '失败: ' + e.message, status:'failed'});
+    if (PG_AGENT_ID === aid) renderPGChat();
+  }
+}
+window.peCreate = async () => {
+  try { await api('/a2a/peers', {method:'POST', headers:{'content-type':'application/json'},
+      body: JSON.stringify({name:$('#pe-n').value.trim(), base_url:$('#pe-u').value.trim(),
+                            description: $('#pe-desc')?.value.trim() || '', direction:'outbound'})});
+    flashMsg($('#pe-msg'), true, 'Peer 注册成功');
+    $('#pe-n').value = ''; $('#pe-u').value = ''; if ($('#pe-desc')) $('#pe-desc').value = '';
+    await refreshPeers();
+  } catch (e) { flashMsg($('#pe-msg'), false, e.message); }
+};
+window.docAdd = async () => {
+  try {
+    const r = await api('/rag/documents', {method:'POST', headers:{'content-type':'application/json'},
+      body: JSON.stringify({title:$('#doc-t').value.trim(), content:$('#doc-c').value})});
+    flashMsg($('#doc-msg'), true, `入库成功，切分 ${r.chunk_count} 个片段`);
+    $('#doc-t').value=''; $('#doc-c').value='';
+    await refreshDocList();
+  } catch (e) { flashMsg($('#doc-msg'), false, e.message); }
+};
+window.docToggleCustom = () => {
+  const box = $('#doc-params'); if (box) box.classList.toggle('hidden', $('#doc-genre')?.value !== 'custom');
+};
+window.docPreview = async () => {
+  const f = $('#doc-file')?.files?.[0];
+  if (!f) { flashMsg($('#doc-msg'), false, '请先选择要上传的文件'); return; }
+  const box = $('#doc-preview');
+  box.innerHTML = loading('解析并预览分块中…');
+  try {
+    const fd = new FormData(); fd.append('file', f);
+    fd.append('genre', $('#doc-genre')?.value || '');
+    fd.append('chunk_size', parseInt($('#doc-size')?.value)||500);
+    fd.append('overlap', parseInt($('#doc-overlap')?.value)||50);
+    const r = await api('/rag/documents/preview', {method:'POST', body: fd});
+    window.__docPreview = {f, result: r};
+    // 自动识别仅作提示；用户下拉值优先
+    const sug = r.suggestion || {};
+    $('#doc-detect').innerHTML = `<div class="d" style="margin-top:10px;font-size:12px">
+      自动识别建议：<b>${esc(sug.genre_label||'未知')}</b>（置信度 ${sug.confidence??0}）· ${esc(sug.reason||'')}
+      ${sug.confidence < 0.6 ? '<span style="color:var(--warn)"> 置信度较低，建议手动指定</span>' : ''}</div>`;
+    box.innerHTML = `<div class="d" style="margin:10px 0">体裁：<b>${esc(r.genre_label)}</b> · 共 ${r.chunk_count} 块${r.truncated?'（仅显示前30块）':''}</div>
+      <div class="ag-list-view" style="max-height:260px">${r.chunks.map(c=>
+        `<div class="card" style="margin-bottom:6px"><div class="t" style="font-size:12px">块 ${c.chunk_index+1} · ${esc(c.kind)} · ${esc(JSON.stringify(c.locator))}</div>
+         <div class="d" style="font-size:12px;white-space:pre-wrap">${esc(c.text.slice(0,220))}${c.text.length>220?'…':''}</div></div>`).join('')}</div>
+      <div class="row" style="margin-top:10px"><button class="act" onclick="docConfirm(this)">确认入库</button>
+        <button class="ghost" onclick="document.querySelector('#doc-preview').innerHTML=''">取消</button></div>`;
+  } catch (e) { box.innerHTML = msg(false, e.message); }
+};
+window.docConfirm = async (btn) => {
+  const p = window.__docPreview; if (!p) return;
+  const fd = new FormData(); fd.append('file', p.f);
+  fd.append('genre', $('#doc-genre')?.value || '');
+  fd.append('chunk_size', $('#doc-size')?.value || '500');
+  fd.append('overlap', $('#doc-overlap')?.value || '50');
+  // 显示转圈加载，禁用按钮防重复提交
+  if (btn) { btn.disabled = true; }
+  $('#doc-msg').innerHTML = `<div class="loading-box"><span class="spinner"></span>正在入库：分块、向量化并写入知识库…</div>`;
+  try {
+    const r = await api('/rag/documents/upload', {method:'POST', body: fd});
+    flashMsg($('#doc-msg'), true, `「${p.f.name}」入库成功：${r.genre_label}（${r.genre_source==='user'?'手动指定':'自动识别'}），切分 ${r.chunk_count} 块`);
+    $('#doc-file').value=''; $('#doc-preview').innerHTML=''; $('#doc-detect').innerHTML='';
+    $('#doc-file-name').textContent='未选择文件（txt / md / pdf / docx / xlsx / csv / json / log）';
+    window.__docPreview = null;
+    await refreshDocList();
+  } catch (e) {
+    flashMsg($('#doc-msg'), false, e.message);
+    if (btn) { btn.disabled = false; }
+  }
+};
+async function refreshDocList() {
+  const el = $('#doc-list'); if (!el) return;
+  const docs = await api('/rag/documents').catch(()=>[]);
+  const STRAT = {'markdown-heading':'按标题层级', 'page-aware':'按页', 'paragraph':'按段落', 'row-aware':'按行', 'line-aware':'按行', 'fixed-window':'固定窗口'};
+  // 按文件类型选图标与颜色（仿 Windows 资源管理器）
+  const TYPE_ICON = {
+    '.pdf': {label:'PDF', cls:'ft-pdf'}, '.docx': {label:'DOC', cls:'ft-doc'},
+    '.xlsx': {label:'XLS', cls:'ft-xls'}, '.csv': {label:'CSV', cls:'ft-xls'},
+    '.md': {label:'MD', cls:'ft-md'}, '.markdown': {label:'MD', cls:'ft-md'},
+    '.json': {label:'{}', cls:'ft-json'}, '.log': {label:'LOG', cls:'ft-txt'},
+    '.txt': {label:'TXT', cls:'ft-txt'},
+  };
+  const icon = f => { const t = TYPE_ICON[f] || TYPE_ICON['.txt']; return `<span class="filetype ${t.cls}">${t.label}</span>`; };
+  if (!docs.length) { el.innerHTML = '<div class="empty">暂无文档，上传一个文件试试</div>'; return; }
+  el.innerHTML = `<div class="file-explorer">
+    <div class="fe-head"><span>名称</span><span>类型</span><span>分块策略</span><span>片段</span><span>上传日期</span><span>操作</span></div>
+    ${docs.map(d => {
+      const ft = d.file_type || '.txt';
+      const date = (d.created_at||'').slice(0,16);
+      return `<div class="fe-row" ondblclick="docOpen('${d.id}')">
+        <span class="fe-name" onclick="docOpen('${d.id}')" title="双击打开">${icon(ft)}<span>${esc(d.source_filename||d.title||d.id)}</span></span>
+        <span class="fe-cell">${esc(ft.toUpperCase())}</span>
+        <span class="fe-cell"><span class="tag acc">${esc(STRAT[d.chunk_strategy]||'自动')}</span></span>
+        <span class="fe-cell">${d.chunk_count}</span>
+        <span class="fe-cell dim">${esc(date)}</span>
+        <span class="fe-cell"><button class="pl-act del" onclick="docDelete('${d.id}','${esc(d.title||d.id)}')">删除</button></span>
+      </div>`;
+    }).join('')}
+  </div>`;
+}
+window.docDelete = async (id, title) => {
+  if (!(await modal({title:'删除文档', message:`确定删除文档「${title}」及其向量索引？`, confirmText:'删除', danger:true}))) return;
+  try {
+    await api(`/rag/documents/${id}`, {method:'DELETE'});
+    if ($('#doc-detail')) $('#doc-detail').innerHTML='';
+    await refreshDocList();
+  } catch (e) { toast(e.message, '删除失败'); }
+};
+window.docOpen = async id => {
+  const box = $('#doc-detail'); if (!box) return;
+  try {
+    const d = await api(`/rag/documents/${id}`);
+    box.innerHTML = `<div class="card" style="margin-top:16px">
+      <div class="ag-head"><div class="ag-title">${esc(d.title)} <span class="tag">${esc(d.file_type)}</span></div>
+        <button class="co-close" title="关闭" onclick="document.querySelector('#doc-detail').innerHTML=''">×</button></div>
+      <div class="d" style="font-size:12px;color:var(--dim);margin:6px 0 10px">
+        源文件：${esc(d.source_filename||'-')} · 分块策略：${esc(d.chunk_strategy)} · ${d.chunk_count} 片段 · 完整内容
+      </div>
+      <pre style="max-height:520px;white-space:pre-wrap;word-break:break-word">${esc(d.content)}</pre>
+    </div>`;
+    box.scrollIntoView({behavior:'smooth', block:'nearest'});
+  } catch (e) { box.innerHTML = msg(false, e.message); }
+};
+window.qGo = async () => {
+  try {
+    const r = await api('/rag/search', {method:'POST', headers:{'content-type':'application/json'}, body: JSON.stringify({content:$('#q-in').value})});
+    const head = `<div class="d" style="font-size:11.5px;color:var(--dim);margin:8px 0">
+      混合检索（向量+BM25 · RRF融合） · 阈值 ${r.threshold} · top_k ${r.top_k} · 候选 ${r.candidates} → 保留 ${r.kept}</div>`;
+    $('#q-out').innerHTML = head + (r.hits.length ? r.hits.map(h =>
+      `<div class="card" style="margin-top:6px"><div class="t" style="font-size:13px">${esc(h.title)}
+         <span class="tag acc">相关度 ${(h.relevance??0).toFixed(3)}</span>
+         <span class="tag">RRF ${(h.score??0).toFixed(4)}</span>
+         <span class="tag">BM25 ${(h.bm25_score??0).toFixed(1)}</span>
+         ${r.reranked?'<span class="tag ok">已重排</span>':''}</div>
+       <div class="d">${esc(h.text.slice(0,180))}…</div></div>`).join('') : '<div class="empty">无命中（相关性未达到阈值）</div>');
+  } catch (e) { $('#q-out').innerHTML = msg(false, e.message); }
+};
+
+showView(currentView(), false);
+</script>
+</body>
+</html>

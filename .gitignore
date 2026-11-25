@@ -1,0 +1,22 @@
+.env
+__pycache__/
+*.pyc
+.pytest_cache/
+.venv/
+node_modules/
+model-service/node_modules/
+*.log
+.DS_Store
+
+# 运行时生成的资产数据（用户在使用/测试中创建，不进版本库）
+# 保留目录本身与 .gitkeep，忽略其中的具体内容
+agents/*
+!agents/.gitkeep
+skills/*
+!skills/.gitkeep
+plugins/*
+!plugins/.gitkeep
+mcp/*
+!mcp/.gitkeep
+dsh-exports/*
+!dsh-exports/.gitkeep
