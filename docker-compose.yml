@@ -75,7 +75,7 @@ services:
       AWS_QDRANT_PORT: 6333
       AWS_ANTHROPIC_BASE_URL: ${ANTHROPIC_BASE_URL}
       AWS_ANTHROPIC_AUTH_TOKEN: ${ANTHROPIC_AUTH_TOKEN}
-      AWS_ANTHROPIC_MODEL: ${ANTHROPIC_MODEL:-MiniMax-M2.5}
+      AWS_ANTHROPIC_MODEL: ${ANTHROPIC_MODEL:-MiniMax-M3.1-Flash}
       AWS_EMBEDDING_PROVIDER: ${EMBEDDING_PROVIDER}
       AWS_EMBEDDING_DIM: ${EMBEDDING_DIM}
       AWS_EMBEDDING_API_BASE: ${EMBEDDING_API_BASE}
@@ -98,6 +98,8 @@ services:
       - ./plugins:/srv/data/artifacts/plugins
       - ./agents:/srv/data/artifacts/agents
       - ./mcp:/srv/data/artifacts/mcp
+      # Skill 脚本生成的交付文件（报告 docx 等）放项目 outputs/，用户可直接找到
+      - ./outputs:/srv/data/artifacts/outputs
       # 导出的 DSH bundle 放在项目根目录 dsh-exports/，用户可直接找到
       - ./dsh-exports:/srv/app/dsh-exports
       # DSH_HOME 映射：导出的插件/Skill 直接落到本机 DSH 目录

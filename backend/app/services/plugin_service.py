@@ -18,30 +18,29 @@ from .audit_service import audit
 
 # 内置插件的功能简介（对齐 DSH meta.description）
 BUILTIN_DESCRIPTIONS = {
-    "memory_simple": "短期会话记忆插件：按用户与会话隔离保存记忆条目，供 Agent 在对话中回忆历史上下文。",
-    "chunking_fixed": "固定窗口文档分块插件：将长文档切分为固定大小、带重叠的片段，供 RAG 入库使用。",
-    "intent_keyword": "关键词意图识别插件：根据输入中的关键词判断用户意图并输出置信度与结构化参数。",
-    "compress_truncate": "上下文压缩插件：对检索片段按字符上限截断，降低上下文长度与 token 消耗。",
+    "memory_simple": "跨轮持久化记忆插件：按 Agent 隔离落盘保存用户事实、偏好与对话摘要，下一轮自动按相关度与新鲜度召回。",
+    "intent_keyword": "关键词意图路由插件：识别闲聊/检索/总结/任务执行等意图，闲聊自动跳过无效 RAG，检索自动扩大召回并注入策略指引。",
+    "compress_truncate": "相关性上下文压缩插件：对 RAG 召回片段去重，按查询关键词优先抽取高相关句子并按总字符预算精准压缩。",
+    "pii_guard": "合规审核与隐私脱敏插件：在四阶段钩子中自动对手机号、身份证号等敏感信息脱敏，并支持配置敏感词与危险工具拦截。",
 }
 
 # 运行机制：插件如何介入 Runtime、如何影响 LLM 的系统指令与生成
 BUILTIN_MECHANISMS = {
     "memory_simple": (
-        "在 Runtime 的 memory 步骤执行：将本轮用户输入与 RAG 命中标题整理成记忆条目，"
-        "写入会话上下文。系统指令组装阶段（_build_system）把记忆作为「会话记忆」段落注入，"
-        "LLM 因此能在生成回复时参考本会话的历史信息。"
-    ),
-    "chunking_fixed": (
-        "在 RAG 文档入库阶段执行：把长文档按 chunk_size 与 overlap 切分成片段，逐片向量化后写入 Qdrant。"
-        "运行时不直接驱动 LLM，而是决定检索时能召回的知识粒度，间接影响注入系统指令的参考资料质量。"
+        "双阶段生效：对话前（before_llm）从 memory/<agent>.json 按查询词相关度与时间新鲜度召回 Top-K 历史记忆注入系统提示词；"
+        "对话后（after_llm）自动提取用户偏好/事实声明及本轮摘要持久化落盘，真正实现跨轮与跨重启记忆。"
     ),
     "intent_keyword": (
-        "在 Runtime 的 intent 步骤执行：扫描用户输入中的关键词，输出 intent 与 confidence。"
-        "若识别出 search_knowledge 类意图，会触发/强化 RAG 检索；结果也写入执行轨迹供调试。"
+        "在 Runtime 的 intent 阶段执行：支持默认与自定义 rules，识别出 chitchat（短句闲聊）时自动设置 skip_rag 跳过冗余检索提速；"
+        "识别出 search_knowledge 时自动扩大 RAG top_k 并向系统提示词注入对应回答策略指引。"
     ),
     "compress_truncate": (
-        "在 Runtime 的 compress 步骤执行：遍历已检索到的片段，按 max_chars 截断文本，"
-        "压缩后的片段进入系统指令的知识库段落，从而减少输入 token、降低上下文超限风险。"
+        "在 RAG 检索之后的 compress 阶段执行：先对命中片段去重，再按用户提问词项对每个句子相关性打分，"
+        "在 max_chars 与 max_total_chars 总预算内按句末边界保留最核心信息，显著降低输入 token 消耗。"
+    ),
+    "pii_guard": (
+        "贯穿 before_llm / before_tool / after_tool / after_llm 四个生命周期钩子：自动按正则对工具结果与最终回答中的手机号、身份证号脱敏；"
+        "可在插件配置或单 Agent 覆盖参数中配置 block_keywords（敏感词拦截）与 block_tools（禁止调用的工具名）。"
     ),
 }
 
@@ -49,6 +48,8 @@ BUILTIN_MECHANISMS = {
 def behavior_guide() -> dict:
     """配置驱动插件的 behavior 说明（用户设计插件时的参考）。"""
     return {
+        "http_webhook": "HTTP POST 调用外部微服务（配置 url / hooks / headers / timeout / fail_open），支持在 before_llm / before_tool / after_tool / after_llm 四个钩子阶段改写上下文、改写参数/结果或直接拦截。",
+        "content_filter": "配置型合规审核与脱敏（配置 hooks / block_keywords / block_tools / redact_patterns / block_message），支持全 4 个生命周期钩子。",
         "intent_keywords": "扫描用户输入的关键词，输出 intent/confidence；命中 search_knowledge 时触发 RAG 检索。",
         "memory_echo": "把本轮用户输入整理为记忆条目，注入系统指令的「会话记忆」段落。",
         "compress_truncate": "按 max_chars 截断 RAG 检索片段，减少进入系统指令的 token 量。",

@@ -96,8 +96,18 @@ def _sanitize_outbound(text: str, policy: dict) -> str:
     return cleaned
 
 
-def run_internal_task(db: Session, task: A2ATask) -> A2ATask:
-    """内部 A2A：Task → 目标 Agent 的 Run。"""
+def run_internal_task(db: Session, task: A2ATask, on_event=None) -> A2ATask:
+    """内部 A2A：Task → 目标 Agent 的 Run。
+
+    on_event: 可选回调，转发目标子 Agent ReAct 循环的实时事件（thought/tool/reasoning/content），
+    供主对话 SSE 展示子 Agent 的思考过程；不影响未传该参数的调用方。
+    """
+    def emit(ev: dict):
+        if on_event:
+            try:
+                on_event(ev)
+            except Exception:
+                pass
     task.state = "working"
     db.flush()
     _check_delegation_chain(db, task)
@@ -133,8 +143,13 @@ def run_internal_task(db: Session, task: A2ATask) -> A2ATask:
         db.commit()
         return task
 
-    run = run_service.run_agent(db, agent, task.message, use_rag=True)
+    # 转发子 Agent 的实时事件（加 agent 标识，前端据此分区显示）
+    def sub_emit(ev: dict):
+        emit({**ev, "sub_agent": task.agent_name})
+
+    run = run_service.run_agent(db, agent, task.message, use_rag=True, on_event=sub_emit)
     task.run_id = run.id
+    task.files = run.files or []   # 交付文件随 A2A 任务透传给委托方
     if run.status == "succeeded":
         task.state = "completed"
         task.result = run.output_text

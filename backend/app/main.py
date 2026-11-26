@@ -8,7 +8,7 @@ from fastapi import FastAPI
 from .config import get_settings
 from .db import get_session_factory, init_db
 from .models import Plugin, Agent
-from .plugins.builtin import ChunkingPlugin, ContextCompressorPlugin, IntentPlugin, MemoryPlugin
+from .plugins.builtin import ContextCompressorPlugin, IntentPlugin, MemoryPlugin
 from .services import rag_service, skill_designer_service, plugin_service, plugin_designer_service, agent_store
 from .routers.api import router as api_router
 from .routers.api_full import router as full_router
@@ -40,10 +40,11 @@ def _rebuild_skills_from_disk(session) -> None:
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     init_db()
-    # 注册内置插件（幂等）
+    # 注册内置插件（幂等）并清理已下线的冗余分块插件 chunking_fixed
     session = get_session_factory()()
     try:
-        for p in (MemoryPlugin(), ChunkingPlugin(), IntentPlugin(), ContextCompressorPlugin()):
+        session.query(Plugin).filter(Plugin.key == "chunking_fixed").delete()
+        for p in (MemoryPlugin(), IntentPlugin(), ContextCompressorPlugin()):
             exists = session.query(Plugin).filter(Plugin.key == p.key).first()
             if not exists:
                 session.add(
@@ -57,6 +58,39 @@ async def lifespan(app: FastAPI):
                         builtin=True,
                     )
                 )
+        # 预置内置合规审核与隐私脱敏插件（配置驱动 content_filter，支持四阶段钩子）
+        if not session.query(Plugin).filter(Plugin.key == "pii_guard").first():
+            session.add(
+                Plugin(
+                    id="plugin_pii_guard",
+                    key="pii_guard",
+                    name="合规审核与隐私脱敏",
+                    description=plugin_service.BUILTIN_DESCRIPTIONS["pii_guard"],
+                    mechanism=plugin_service.BUILTIN_MECHANISMS["pii_guard"],
+                    extension_point="WorkflowNode",
+                    slot_semantics="pipeline",
+                    config={
+                        "behavior": "content_filter",
+                        "hooks": ["before_llm", "before_tool", "after_tool", "after_llm"],
+                        "block_keywords": [],
+                        "block_tools": [],
+                        "redact_patterns": [
+                            {"pattern": r"1[3-9]\d{9}", "replace": "[手机号已脱敏]"},
+                            {"pattern": r"\b\d{17}[\dXx]\b", "replace": "[身份证号已脱敏]"},
+                        ],
+                        "block_message": "内容或操作触发安全合规策略，已拦截",
+                    },
+                    config_schema={
+                        "hooks": {"type": "list", "default": ["before_llm", "before_tool", "after_tool", "after_llm"]},
+                        "block_keywords": {"type": "list", "default": []},
+                        "block_tools": {"type": "list", "default": []},
+                        "redact_patterns": {"type": "list", "default": []},
+                    },
+                    builtin=True,
+                    enabled=True,
+                    source="builtin",
+                )
+            )
         session.commit()
     finally:
         session.close()
@@ -79,6 +113,9 @@ async def lifespan(app: FastAPI):
         for _a in session.query(Agent).all():
             agent_store.save_agent_dir(_a)
         session.commit()
+        # 记录三向同步初始基线快照（后续运行时实时检测磁盘与数据库双向变化）
+        from .services import asset_sync
+        asset_sync.init_all_baselines(session)
         # 从 DB 重建向量索引（维度变更/服务重启后；DB 文档是真相源）
         try:
             rag_service.ensure_collection()

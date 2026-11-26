@@ -82,6 +82,7 @@ class AgentOut(BaseModel):
 class RunCreate(BaseModel):
     input: str
     use_rag: bool = True
+    history: list[dict] = Field(default_factory=list)  # 多轮对话历史 [{role, content}]
 
 
 class RunOut(BaseModel):

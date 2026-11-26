@@ -24,7 +24,10 @@ class Settings(BaseSettings):
     # LLM（Anthropic 兼容 API）
     anthropic_base_url: str = ""
     anthropic_auth_token: str = ""
-    anthropic_model: str = "claude-sonnet-4-5"
+    anthropic_model: str = "MiniMax-M3.1-Flash"
+    # 上下文窗口：单次输出上限与对话历史保留条数（MiniMax 支持 200K 上下文）
+    llm_max_tokens: int = 128000       # 单次输出 max_tokens，避免长报告被截断
+    llm_history_limit: int = 100       # 对话历史保留条数（0=不截断）
 
     # 向量 / 重排 Provider
     embedding_provider: str = "hashing"  # hashing | tei | openai

@@ -11,6 +11,7 @@
 - 对话任务后台化：任务在后台线程执行并落库，切换会话/页面不中断；会话列表执行中转圈、完成后绿点；重连从事件缓冲续读
 - 插件驱动：按 extension_point 自动挂载到 Runtime 生命周期（装了即生效，不依赖手写 workflow；workflow 仅作高级手动编排）
 - 独立智能体：所有 Agent（含内置设计 Agent）统一走 ReAct 工作循环。设计 Agent 的 system_prompt 是正常对话 prompt（与内部生成清单的 DESIGNER_PROMPT 分离），问身份正常答、要设计时才产出制品，不再无条件强制设计。
+- 主 Agent 委托：LLM 自主决策委托哪个子 Agent/团队（_plan_delegation），不再写死意图判断；执行层统一走 A2A task（幂等/trace/委托链），结果回灌后主 Agent 综合回答。
 - MCP 市场：粘贴标准 mcpServers JSON 配置（Claude Desktop/Cursor 格式）批量接入，支持 headers 鉴权；配置落项目 `mcp/<name>/mcp.json`（文件优先，MySQL 只做索引，启动重建）；自动握手发现工具并注册为 Agent 可调用的 `mcp_<server>_<tool>` 工具；卡片展示功能介绍、分类与工具清单，支持刷新/启停/删除
 
 ## 启动
@@ -33,7 +34,7 @@ docker compose up -d --build
 | Skill 准入 | ZIP 安全扫描（路径穿越/符号链接/压缩炸弹/条目数/可执行文件）+ 密钥/危险命令扫描 + 规范校验，审核记录留痕 | `GET /skills/{name}/reviews` |
 | 插件体系 | 插件市场（对齐 DSH 思想）：功能简介 + 运行机制说明、来源标记、市场/GitHub/本地安装、启停、所有插件可修改/删除、配置驱动执行（behavior）、设计指南 | `GET /plugins/managed` `GET /plugins/behaviors` `POST /plugins/install` `POST /plugins/install-local` `PUT /plugins/{key}` `DELETE /plugins/{key}` |
 | Agent 市场 | 组装发布（依赖锁定）、动态选用所有已安装插件（含用户新装）、评测集运行、Fork 血缘、Playground 调试 | `POST /agents` `POST /agents/{id}/eval` `/fork` `/playground` |
-| A2A | 内部任务由主 Agent 在智能对话中自动发起；调用链查询（按 trace 看父子任务、状态、耗时）；对外暴露地址配置（`AWS_A2A_PUBLIC_BASE_URL`）；外部 Peer 简介/自动分类/按分类展示、白名单管理与出站脱敏 | `GET /a2a/trace/{trace_id}` `GET /a2a/traces` `GET /a2a/public-url` `POST /a2a/peers` `DELETE /a2a/peers/{id}` |
+| A2A | 内部任务由主 Agent 在智能对话中自动发起；调用链查询；**Peer 注册自动从新版标准路径 `/.well-known/agent-card.json` 发现名称/简介/能力**（手动可覆盖、可刷新）；本平台 Card 暴露到标准路径；对外暴露地址配置；外部 Peer 按分类展示与白名单管理 | `POST /a2a/peers/discover` `POST /a2a/peers` `POST /a2a/peers/{id}/refresh-card` `GET /.well-known/agent-card.json` `GET /a2a/trace/{id}` |
 | 模型网关 | 模型目录 fallback 链、预算硬限、token 计量 | 内部 |
 | 计量审计 | 按主体累计 run/a2a/llm token；发布/运行/A2A/Peer 全动作审计 | `GET /usage` `GET /audit` |
 | 知识库 | 上传→体裁识别（11类+自定义，规则+LLM，仅建议）→手动指定优先→分块预览→确认入库；体裁驱动分块（合同按条款、FAQ按问答对、代码按函数、自定义块长/重叠）；混合检索（向量+BM25，RRF，阈值0.5，top_k5）；完整内容查看、删除同步清向量 | `POST /rag/documents/preview` `POST /rag/documents/upload` `GET /rag/documents/{id}` `DELETE /rag/documents/{id}` `/rag/search` |
@@ -97,6 +98,26 @@ python backend/tests/e2e_upload_loading.py # 入库中转圈加载符
 # 本地模型语义检索：docker exec -e PYTHONPATH=/srv/app agent-wokplat-api python tests/e2e_local_model.py
 # 主Agent能力清单：docker exec -e PYTHONPATH=/srv/app agent-wokplat-api python tests/e2e_orch_capability.py
 # 独立智能体ReAct循环：docker exec -e PYTHONPATH=/srv/app agent-wokplat-api python tests/e2e_agent_loop.py
+# LLM自主委托子Agent：docker exec -e PYTHONPATH=/srv/app agent-wokplat-api python tests/e2e_llm_delegation.py
+docker exec -e PYTHONPATH=/srv/app agent-wokplat-api python tests/e2e_skill_load.py # Agent装配的Skill完整加载与脚本执行
+docker exec -e PYTHONPATH=/srv/app agent-wokplat-api python tests/e2e_playground_stream.py # Playground流式思考/工具事件
+python backend/tests/e2e_stream_ui.py # 前端实时渲染思考过程
+docker exec -e PYTHONPATH=/srv/app agent-wokplat-api python tests/e2e_reasoning_stream.py # 模型真实思考链流式输出
+python backend/tests/e2e_pg_format.py # Playground 对话格式与智能对话一致
+docker exec -e PYTHONPATH=/srv/app agent-wokplat-api python tests/e2e_session_skillscript.py # 会话里调度 skill_script 工具
+docker exec -e PYTHONPATH=/srv/app agent-wokplat-api python tests/e2e_context_window.py # 上下文窗口配置验证
+docker exec -e PYTHONPATH=/srv/app agent-wokplat-api python tests/e2e_agent_context.py # Agent 多轮上下文记忆
+docker exec -e PYTHONPATH=/srv/app agent-wokplat-api python tests/e2e_file_delivery.py # 文件交付通道：脚本生成文件→下载
+docker exec -e PYTHONPATH=/srv/app agent-wokplat-api python tests/e2e_report_tools.py # 内置工具与MCP共存、报告脚本可执行
+docker exec -e PYTHONPATH=/srv/app agent-wokplat-api python tests/e2e_report_script_path.py # 报告脚本同级Skill路径解析
+docker exec -e PYTHONPATH=/srv/app agent-wokplat-api python tests/e2e_qxb_config.py # qxb数据源从项目mcp/读连接
+docker exec -e PYTHONPATH=/srv/app agent-wokplat-api python tests/e2e_all_report_scripts.py # 日报/周报/月报三者取数引用
+python backend/tests/e2e_task_switch_resume.py # 任务中切页再切回：结果与文件卡片恢复
+docker exec -e PYTHONPATH=/srv/app agent-wokplat-api python tests/e2e_sub_think_stream.py # 子Agent实时思考透传
+python backend/tests/e2e_sub_ui.py # 前端分区渲染子Agent过程
+docker exec -e PYTHONPATH=/srv/app agent-wokplat-api python tests/e2e_panel_files.py # 文件进入智能对话消息面板数据源
+docker exec -e PYTHONPATH=/srv/app agent-wokplat-api python tests/e2e_real_report_delivery.py # 报告脚本路径容错+强制交付目录
+# 交付文件：Skill 脚本产物落项目 outputs/<run_key>/，对话中显示可点击下载卡片；GET /files/{run_key}/{filename} 下载
 # 插件+自主能力叠加：docker exec -e PYTHONPATH=/srv/app agent-wokplat-api python tests/e2e_plugin_plus_react.py
 # 体裁分块：docker exec -e PYTHONPATH=/srv/app agent-wokplat-api python tests/e2e_genre_chunking.py
 python backend/tests/e2e_frontend_chatv2.py  # 智能对话v2：会话侧栏/切换/持久化/中断/队列
@@ -133,7 +154,8 @@ python backend/tests/e2e_playground_spin.py # Playground 测试 Agent 时显示�
 # （设计 Agent 走普通 ReAct，问身份不再强制设计制品）
 python backend/tests/e2e_playground_persist.py # Playground 对话按 Agent 保留（切页面不丢）
 python backend/tests/e2e_playground_height.py # Playground 聊天框占满页面高度
-python backend/tests/e2e_a2a_panel.py  # A2A 页面：调用链查询、Peer 说明
+docker exec -e PYTHONPATH=/srv/app agent-wokplat-api python tests/e2e_a2a_card_discover.py # Peer 自动发现 Agent Card
+python backend/tests/e2e_peer_card_ui.py # 前端 Peer 自动识别回显与能力展示
 python backend/tests/e2e_peer_category.py # 外部 Peer 简介/分类/分组展示/删除
 python backend/tests/e2e_a2a_public.py # A2A 对外暴露地址展示
 python backend/tests/e2e_card_placement.py # Agent 卡片内覆盖查看 Card、Agent URL 规则（内部不依赖 URL）
@@ -146,7 +168,7 @@ python backend/tests/e2e_card_overlay.py # Agent Card 覆盖层与信息卡同�
 
 ## LLM 说明
 
-主模型经 OpenAI 兼容 `/v1/chat/completions` 调用（模型目录 MiniMax-M2.5/M2.7/M3）。网关 503 或服务级故障时快速熔断并给诚实降级提示；单模型失效时按目录 fallback 链切换。切换本地 bge 模型：`.env` 中 `EMBEDDING_PROVIDER=tei`、`EMBEDDING_API_BASE`、`RERANK_PROVIDER=tei`、`RERANK_API_BASE`。
+主模型经 OpenAI 兼容 `/v1/chat/completions` 调用（默认 MiniMax-M3.1-Flash；模型目录 M3.1-Flash/M3/M2.7/M2.5）。网关 503 或服务级故障时快速熔断并给诚实降级提示；单模型失效时按目录 fallback 链切换。切换本地 bge 模型：`.env` 中 `EMBEDDING_PROVIDER=tei`、`EMBEDDING_API_BASE`、`RERANK_PROVIDER=tei`、`RERANK_API_BASE`。
 
 智能对话具备主 Agent + 两个内置设计子 Agent（`skill-designer` / `plugin-designer`）：识别「设计 Skill / 开发插件」意图后经 A2A 委托对应子 Agent 产出并发布；处理中可继续提问，消息进入前端待发队列（可编辑/删除），当前任务完成后自动顺序发送。
 

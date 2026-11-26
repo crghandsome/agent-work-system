@@ -177,6 +177,17 @@ def delete_skill_file(name: str, rel_path: str) -> bool:
     return True
 
 
+def delete_skill_dir(name: str) -> bool:
+    """删除整个 Skill 目录（含安全校验，防止误删根目录）。"""
+    if not name or name in (".", "..") or "/" in name or "\\" in name:
+        return False
+    d = skill_dir(name)
+    if not d.exists() or not d.is_dir():
+        return False
+    shutil.rmtree(d)
+    return True
+
+
 def unpack_zip_to_skill_dir(name: str, data: bytes) -> dict:
     """把上传的 ZIP 解包成 Skill 目录。"""
     d = skill_dir(name)
@@ -209,12 +220,26 @@ def build_skill_dir(name: str, description: str, instructions: str) -> dict:
 
 
 def load_skill_bundle(name: str, sha256: str = "") -> dict | None:
-    """运行时加载：读取 Skill 目录并分类文件。"""
+    """运行时加载：读取 Skill 目录并分类文件。
+
+    兼容两种目录形态：
+    - 标准：skills/<name>/SKILL.md + references/ + scripts/
+    - 多套一层（用户 zip 上传常见）：skills/<name>/<name>/SKILL.md + ...
+    """
     d = skill_dir(name)
     if not d.exists():
         return None
     if sha256 and skill_digest(name) != sha256:
         return None  # 内容被改动：拒绝加载（可用索引里的旧哈希校验）
+
+    # 探测真实根：若顶层无 SKILL.md，但存在唯一子目录含 SKILL.md，下移一层
+    if not (d / "SKILL.md").exists():
+        subdirs = [p for p in d.iterdir() if p.is_dir()]
+        for sub in subdirs:
+            if (sub / "SKILL.md").exists():
+                d = sub
+                break
+
     instructions, references, scripts, assets = "", {}, [], []
     for f in sorted(d.rglob("*")):
         if not f.is_file():

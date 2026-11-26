@@ -19,6 +19,8 @@ RESERVED = {"categories", "dialog", "upload", "upload-md", "template"}
 
 @router.get("/skills", response_model=list[SkillOut])
 def list_skills(db: Session = Depends(get_db)):
+    from ..services import asset_sync
+    asset_sync.sync_skills(db)
     return db.query(Skill).order_by(Skill.created_at.desc()).all()
 
 
@@ -26,6 +28,8 @@ def list_skills(db: Session = Depends(get_db)):
 def get_skill(name: str, db: Session = Depends(get_db)):
     if name in RESERVED:
         raise HTTPException(404, "Skill 不存在")
+    from ..services import asset_sync
+    asset_sync.sync_skills(db)
     skill = db.query(Skill).filter(Skill.name == name).first()
     if not skill:
         raise HTTPException(404, f"Skill '{name}' 不存在")
@@ -34,6 +38,8 @@ def get_skill(name: str, db: Session = Depends(get_db)):
 
 @router.get("/plugins", response_model=list[PluginOut])
 def list_plugins(db: Session = Depends(get_db)):
+    from ..services import asset_sync
+    asset_sync.sync_plugins(db)
     # 返回全部插件（含停用），前端据此显示启用/停用状态
     return db.query(Plugin).order_by(Plugin.builtin.desc(), Plugin.key).all()
 

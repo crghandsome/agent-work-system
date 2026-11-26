@@ -65,11 +65,11 @@ def fork_agent(db: Session, source: Agent, new_name: str) -> Agent:
     return fork
 
 
-def run_playground(db: Session, agent: Agent, input_text: str) -> AgentRun:
+def run_playground(db: Session, agent: Agent, input_text: str, on_event=None, history: list[dict] | None = None) -> AgentRun:
     """Playground：所有 Agent 统一走 ReAct 工作循环。
 
     设计类 Agent（skill-designer / plugin-designer）此前有按名字写死的特判，
     导致任何输入（哪怕是"你是谁"）都被当成设计需求强制执行。已取消：
     它们现在和其它 Agent 一样走普通 ReAct 循环，能正常对话、也能自主调工具设计制品。
     """
-    return run_service.run_agent(db, agent, input_text, use_rag=True)
+    return run_service.run_agent(db, agent, input_text, use_rag=True, on_event=on_event, history=history)

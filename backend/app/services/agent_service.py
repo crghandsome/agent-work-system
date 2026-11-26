@@ -6,13 +6,19 @@ from sqlalchemy.orm import Session
 from ..models import Agent, Plugin, Skill, new_id
 from ..plugins.builtin import PLUGIN_REGISTRY, WorkflowRunner
 
-# 槽位 → 扩展点（对应 4.2 语义：memory/intent/chunking 单槽位；compress 管道可叠加）
+# 槽位 → 扩展点（memory/intent 单槽位互斥；compress 与 workflow 支持多实例管道叠加）
 SLOTS: dict[str, str] = {
     "memory": "MemoryProvider",
-    "chunking": "ChunkingStrategy",
     "intent": "IntentRecognizer",
     "compress": "ContextCompressor",
+    "workflow": "WorkflowNode",
 }
+PIPELINE_SLOTS = {"compress", "workflow"}
+
+
+def base_slot(slot: str) -> str:
+    """支持多实例槽位名，如 'workflow:audit' / 'compress:2' → 'workflow' / 'compress'。"""
+    return (slot or "").split(":", 1)[0]
 
 
 class AssemblyValidationError(ValueError):
@@ -26,30 +32,31 @@ def validate_assembly(db: Session, *, skill_keys: list[str], plugin_keys: dict[s
     """组装校验矩阵。全部通过返回警告列表；任一失败抛 AssemblyValidationError。"""
     warnings: list[dict] = []
 
-    # 1. 槽位合法性（单槽位互斥由结构保证：每槽位一个 key）
+    # 1. 槽位合法性：单槽位互斥；compress / workflow 允许用 'workflow:<id>' 形式多实例叠加
+    seen_single: set[str] = set()
     for slot, key in plugin_keys.items():
-        if slot not in SLOTS:
+        bslot = base_slot(slot)
+        if bslot not in SLOTS:
             raise AssemblyValidationError("unknown-slot", f"未知槽位 '{slot}'，合法槽位: {sorted(SLOTS)}")
+        if ":" in slot and bslot not in PIPELINE_SLOTS:
+            raise AssemblyValidationError(
+                "single-slot-multi",
+                f"槽位 '{bslot}' 为单槽位，不支持多实例挂载 '{slot}'（仅 {sorted(PIPELINE_SLOTS)} 支持叠加）",
+            )
+        if bslot not in PIPELINE_SLOTS:
+            if bslot in seen_single:
+                raise AssemblyValidationError("single-slot-conflict", f"单槽位 '{bslot}' 不可重复挂载")
+            seen_single.add(bslot)
         plugin = db.query(Plugin).filter(Plugin.key == key, Plugin.enabled.is_(True)).first()
         if plugin is None:
             raise AssemblyValidationError("dependency-missing", f"槽位 '{slot}' 引用的插件 '{key}' 不存在或已禁用")
-        if plugin.extension_point != SLOTS[slot]:
+        if plugin.extension_point != SLOTS[bslot]:
             raise AssemblyValidationError(
                 "slot-mismatch",
-                f"插件 '{key}' 的扩展点 {plugin.extension_point} 与槽位 '{slot}'({SLOTS[slot]}) 不匹配",
+                f"插件 '{key}' 的扩展点 {plugin.extension_point} 与槽位 '{slot}'({SLOTS[bslot]}) 不匹配",
             )
 
-    # 2. 能力重叠警告：装了 RAG 检索相关插件但未装 chunking（提示性）
-    if "chunking" not in plugin_keys:
-        warnings.append(
-            {
-                "rule": "capability-overlap",
-                "message": "未安装 chunking 插件，RAG 入库将使用默认固定窗口分块",
-                "severity": "warning",
-            }
-        )
-
-    # 3. 依赖锁定：skill_keys 必须全部存在且为 published
+    # 2. 依赖锁定：skill_keys 必须全部存在且为 published
     for key in skill_keys:
         skill = db.query(Skill).filter(Skill.name == key, Skill.status == "published").first()
         if skill is None:

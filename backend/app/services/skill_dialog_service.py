@@ -9,6 +9,7 @@ import json
 
 from sqlalchemy.orm import Session
 
+from ..config import get_settings
 from ..models import SkillDialog, new_id
 from ..providers.llm import get_llm_provider
 from . import skill_pipeline
@@ -75,7 +76,7 @@ def submit(db: Session, dialog: SkillDialog) -> tuple[object, list[dict]]:
 
 
 def _generate_draft(history: list[dict]) -> dict:
-    transcript = "\n".join(f"{h['role']}: {h['content'][:300]}" for h in history[-6:])
+    transcript = "\n".join(f"{h['role']}: {h['content'][:300]}" for h in history[-get_settings().llm_history_limit:])
     text = _llm_text(f"根据以下对话生成 Skill 草稿。\n{transcript}", system=DRAFT_SYSTEM)
     if text:
         try:

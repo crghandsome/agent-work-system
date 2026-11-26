@@ -30,10 +30,14 @@ def find_team_for_request(db: Session, text: str, explicit_team: str = "") -> di
     return None
 
 
-def delegate_to_team(db: Session, team: dict, user_text: str, trace_id: str) -> dict:
-    """主 Agent → 主理 Agent 单次 A2A 调用；主理内部协调成员并汇总。"""
+def delegate_to_team(db: Session, team: dict, user_text: str, trace_id: str, on_event=None) -> dict:
+    """主 Agent → 主理 Agent 单次 A2A 调用；主理内部协调成员并汇总。
+
+    on_event: 转发主理与各成员的实时思考事件（带 sub_agent 标识）。
+    """
     leader = team["leader"]
     members = team.get("members") or []
+    all_files: list[dict] = []
 
     # 1. 主 Agent 只向 leader 发起一个 A2A 任务
     task, created = a2a_service.get_or_create_task(
@@ -42,7 +46,9 @@ def delegate_to_team(db: Session, team: dict, user_text: str, trace_id: str) -> 
         message=f"[团队主理任务] 团队「{team['name']}」成员：{', '.join(members)}。\n用户请求：{user_text}",
     )
     if created and task.state == "submitted":
-        task = a2a_service.run_internal_task(db, task)
+        task = a2a_service.run_internal_task(db, task, on_event=on_event)
+    if task.files:
+        all_files.extend(task.files)
 
     # 2. 主理 Agent 协调成员：顺序调用每个 member（各自一次 A2A 任务），收集结果
     member_results = []
@@ -53,7 +59,9 @@ def delegate_to_team(db: Session, team: dict, user_text: str, trace_id: str) -> 
             parent_task_id=task.id, message=user_text,
         )
         if mc and mt.state == "submitted":
-            mt = a2a_service.run_internal_task(db, mt)
+            mt = a2a_service.run_internal_task(db, mt, on_event=on_event)
+        if mt.files:
+            all_files.extend(mt.files)
         member_results.append({"agent": m, "state": mt.state,
                                "result": mt.result or mt.error or ""})
 
@@ -74,5 +82,5 @@ def delegate_to_team(db: Session, team: dict, user_text: str, trace_id: str) -> 
         "delegations": [],
         "trace_id": trace_id,
         "team": team["name"], "leader": leader, "leader_task_id": task.id,
-        "member_results": member_results,
+        "member_results": member_results, "files": all_files,
     }

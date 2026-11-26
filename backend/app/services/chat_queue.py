@@ -53,19 +53,28 @@ class ConversationQueue:
             self._condition.notify_all()
         return msg
 
-    def _reap_stale(self, session_id: str, max_age: float = 30.0) -> None:
-        """清理超时残留任务（客户端断开且 finally 未触发时的兜底），避免阻塞队列。"""
+    def _reap_stale(self, session_id: str, max_age: float = 600.0) -> None:
+        """清理超时残留的排队任务（绝不误删仍在执行的 running 会话标记）。"""
         now = time.time()
         q = self._queues.get(session_id)
         if not q:
             return
-        stale = [m for m in q if now - m.created_at > max_age and m.state in ("queued", "running")]
+        stale = [m for m in q if now - m.created_at > max_age and m.state == "queued"]
         for m in stale:
             m.state = "failed"
-            m.error = "超时（客户端断开或执行中断）"
+            m.error = "排队超时"
+            m.finished.set()
+            with m.event_lock:
+                m.event_lock.notify_all()
         if stale:
             self._queues[session_id] = deque(m for m in q if m not in stale)
-            self._running.discard(session_id)
+            # 仅当该会话确实没有 running 任务时，才清理 _running
+            has_running = any(
+                t.session_id == session_id and t.state == "running"
+                for t in self._tasks.values()
+            )
+            if not has_running:
+                self._running.discard(session_id)
 
     def acquire(self, session_id: str, msg_id: str) -> bool:
         """队首取得执行权；非队首返回 False（调用方应等待）。"""
@@ -116,6 +125,8 @@ class ConversationQueue:
                     msg.state = state
                     msg.error = error
                 msg.finished.set()
+                with msg.event_lock:
+                    msg.event_lock.notify_all()
             self._running.discard(session_id)
             self._condition.notify_all()
 
@@ -196,18 +207,26 @@ class ConversationQueue:
                 "state": msg.state, "events": events}
 
     def running_sessions(self) -> list[dict]:
-        """返回每个会话的运行状态（供会话列表显示转圈/完成）。"""
+        """返回每个会话的运行状态（供会话列表显示转圈/完成，以及切回会话时恢复实时进度）。"""
         with self._lock:
             out = []
             for sid in set(self._queues) | self._running:
                 msgs = [m for m in self._tasks.values() if m.session_id == sid
                         and m.state in ("queued", "running")]
                 if msgs:
+                    msg_snaps = []
+                    for m in msgs:
+                        with m.event_lock:
+                            ev_copy = list(m.events)
+                        msg_snaps.append({
+                            "id": m.id,
+                            "text": m.text,
+                            "state": m.state,
+                            "events": ev_copy,
+                        })
                     out.append({"session_id": sid, "running": True,
                                 "message_ids": [m.id for m in msgs],
-                                "messages": [{"id": m.id, "text": m.text[:80],
-                                              "state": m.state,
-                                              "events": list(m.events)} for m in msgs]})
+                                "messages": msg_snaps})
             return out
 
     def session_pending(self, session_id: str) -> list[dict]:

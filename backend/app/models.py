@@ -8,6 +8,7 @@ import uuid
 from datetime import datetime, timezone
 
 from sqlalchemy import JSON, Boolean, DateTime, Integer, String, Text, UniqueConstraint
+from sqlalchemy.dialects.mysql import LONGTEXT
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
 
 
@@ -104,6 +105,7 @@ class AgentRun(Base):
     output_text: Mapped[str] = mapped_column(Text, default="")
     error: Mapped[str] = mapped_column(Text, default="")
     steps: Mapped[list] = mapped_column(JSON, default=list)  # 步骤轨迹（trace 的首期形态）
+    files: Mapped[list] = mapped_column(JSON, default=list)  # 交付文件 [{name,url,size}]
     token_usage: Mapped[dict] = mapped_column(JSON, default=dict)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
     finished_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
@@ -169,6 +171,9 @@ class A2APeer(Base):
     description: Mapped[str] = mapped_column(Text, default="")  # 这个外部 Agent 能干什么
     category: Mapped[str] = mapped_column(String(48), default="其他")  # 按描述自动分类
     base_url: Mapped[str] = mapped_column(String(256))
+    skills: Mapped[list] = mapped_column(JSON, default=list)  # 从 Agent Card 发现的工具/技能
+    card_url: Mapped[str] = mapped_column(String(512), default="")  # Agent Card 发现地址
+    discovered: Mapped[bool] = mapped_column(Boolean, default=False)  # 是否从 Card 自动识别
     auth_type: Mapped[str] = mapped_column(String(16), default="bearer")  # bearer|none
     auth_token: Mapped[str] = mapped_column(String(256), default="")
     direction: Mapped[str] = mapped_column(String(16), default="outbound")  # outbound|inbound
@@ -197,6 +202,7 @@ class A2ATask(Base):
     result: Mapped[str] = mapped_column(Text, default="")  # 输出/Artifact 引用
     error: Mapped[str] = mapped_column(Text, default="")
     run_id: Mapped[str] = mapped_column(String(40), default="")  # 关联 AgentRun
+    files: Mapped[list] = mapped_column(JSON, default=list)  # 交付文件（委托链透传）
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, onupdate=utcnow)
 
@@ -279,4 +285,14 @@ class OrchestratorSession(Base):
     history: Mapped[list] = mapped_column(JSON, default=list)  # [{role, content, delegations}]
     trace_id: Mapped[str] = mapped_column(String(64), default="")
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, onupdate=utcnow)
+
+
+class QxbCache(Base):
+    """黔薪保/工资判定与月报数据源缓存（按项目持久化在 MySQL，不落盘到 skills/ 目录）。"""
+
+    __tablename__ = "qxb_caches"
+
+    cache_key: Mapped[str] = mapped_column(String(128), primary_key=True)
+    payload: Mapped[str] = mapped_column(Text().with_variant(LONGTEXT, "mysql"), default="{}")
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, onupdate=utcnow)

@@ -12,8 +12,12 @@ for n in (leader, member): c.post("/agents", json={"name": n, "description": n})
 tn = f"a2ateam-{U}"
 c.post("/agents/teams", json={"name": tn, "description": "调用链UI测试", "leader": leader, "members": [member]})
 s = c.post("/orchestrator/sessions").json()
-r = c.post(f"/orchestrator/sessions/{s['session_id']}/chat", json={"text": f"让团队 {tn} 处理任务"})
-trace = r.json()["trace_id"]
+trace = s["trace_id"]
+# 直接创建 A2A 内部任务产生调用链（不依赖 LLM 网关是否可用）
+c.post("/a2a/tasks", json={"agent_name": leader, "message": "向团队报告：开始处理",
+                            "trace_id": trace, "idempotency_key": f"panel-lead-{U}"})
+c.post("/a2a/tasks", json={"agent_name": member, "message": "成员执行子任务",
+                            "trace_id": trace, "idempotency_key": f"panel-member-{U}"})
 
 with sync_playwright() as p:
     b = p.chromium.launch(headless=True)
@@ -31,7 +35,7 @@ with sync_playwright() as p:
 
     # 2. Peer 说明
     txt = pg.locator("#main").inner_text()
-    assert "另一个系统" in txt and "管理员提供" in txt, txt[:300]
+    assert "另一个系统" in txt and "agent-card.json" in txt, txt[:300]
     print("✓ 注册 Peer 有 URL 来源说明")
 
     # 3. 调用链查询

@@ -32,6 +32,8 @@ async def upload_skill_zip(file: UploadFile = File(...), db: Session = Depends(g
     except skill_pipeline.SkillValidationError as exc:
         raise HTTPException(422, {"rule": exc.rule, "message": exc.message, "suggestion": exc.suggestion})
     db.commit()
+    from ..services import asset_sync
+    asset_sync.mark_synced("skills", db)
     return {"id": skill.id, "name": skill.name, "warnings": warnings}
 
 
@@ -52,14 +54,18 @@ def create_skill_template(body: TemplateSkillIn, db: Session = Depends(get_db)):
     except skill_pipeline.SkillValidationError as exc:
         raise HTTPException(422, {"rule": exc.rule, "message": exc.message, "suggestion": exc.suggestion})
     db.commit()
+    from ..services import asset_sync
+    asset_sync.mark_synced("skills", db)
     return {"id": skill.id, "name": skill.name, "warnings": warnings}
 
 
 @router.get("/skills/categories")
 def skill_categories(db: Session = Depends(get_db)):
     """分类导航：按分类聚合已发布 Skill（分类由 description 自动归类）。"""
+    from ..services import asset_sync
     from ..services.skill_catalog import CATEGORY_META, CATEGORY_RULES
 
+    asset_sync.sync_skills(db)
     rows = db.query(Skill).filter(Skill.status == "published").all()
     buckets: dict[str, list] = {}
     for s in rows:
@@ -82,9 +88,11 @@ def skill_categories(db: Session = Depends(get_db)):
 @router.get("/skills/{name}/detail")
 def skill_detail(name: str, db: Session = Depends(get_db)):
     """Skill 详情：文件结构树 + 元信息 + SKILL.md 预览。"""
+    from ..services import asset_sync
     from ..services.artifact_store import load_skill_bundle
     from ..services.skill_catalog import file_tree, strip_frontmatter
 
+    asset_sync.sync_skills(db)
     s = db.query(Skill).filter(Skill.name == name).first()
     if not s:
         raise HTTPException(404, "Skill 不存在")
@@ -162,20 +170,27 @@ def skill_edit_files(name: str, body: SkillFileEditIn, db: Session = Depends(get
     audit(db, "skill.files.edit", target=f"skill:{name}",
           detail={"changed": list(body.changes.keys()), "sha256": artifact["sha256"][:16]})
     db.commit()
+    from ..services import asset_sync
+    asset_sync.mark_synced("skills", db)
     return {"name": name, "sha256": artifact["sha256"],
             "files": [f["path"] for f in artifact["files"]], "category": s.category}
 
 
 @router.delete("/skills/{name}")
 def skill_delete(name: str, db: Session = Depends(get_db)):
-    """删除 Skill（元数据与审核记录；制品文件保留用于追溯，可后续清理）。"""
+    """删除 Skill：同步清理数据库元数据、审核记录与本地 skills/<name>/ 目录。"""
+    from ..services import asset_sync
+    from ..services.artifact_store import delete_skill_dir
+
     s = db.query(Skill).filter(Skill.name == name).first()
     if not s:
         raise HTTPException(404, "Skill 不存在")
     db.query(SkillReview).filter(SkillReview.skill_name == name).delete()
     db.delete(s)
+    delete_skill_dir(name)
     audit(db, "skill.delete", target=f"skill:{name}")
     db.commit()
+    asset_sync.mark_synced("skills", db)
     return {"ok": True, "name": name}
 
 
@@ -186,11 +201,14 @@ class SkillCategoryIn(BaseModel):
 @router.patch("/skills/{name}/category")
 def set_skill_category(name: str, body: SkillCategoryIn, db: Session = Depends(get_db)):
     """人工覆盖分类。"""
+    from ..services import asset_sync
+
     s = db.query(Skill).filter(Skill.name == name).first()
     if not s:
         raise HTTPException(404, "Skill 不存在")
     s.category = (body.category or "其他").strip()[:48] or "其他"
     db.commit()
+    asset_sync.mark_synced("skills", db)
     return {"name": s.name, "category": s.category}
 
 
@@ -218,6 +236,8 @@ async def upload_skill_md(file: UploadFile = File(...), db: Session = Depends(ge
     except skill_pipeline.SkillValidationError as exc:
         raise HTTPException(422, {"rule": exc.rule, "message": exc.message, "suggestion": exc.suggestion})
     db.commit()
+    from ..services import asset_sync
+    asset_sync.mark_synced("skills", db)
     return {"id": skill.id, "name": skill.name, "category": skill.category, "warnings": warnings}
 
 
@@ -269,6 +289,8 @@ def submit_dialog(dialog_id: str, db: Session = Depends(get_db)):
     except skill_pipeline.SkillValidationError as exc:
         raise HTTPException(422, {"rule": exc.rule, "message": exc.message, "suggestion": exc.suggestion})
     db.commit()
+    from ..services import asset_sync
+    asset_sync.mark_synced("skills", db)
     return {"skill": skill.name, "warnings": warnings}
 
 
@@ -359,6 +381,8 @@ def plugin_install(body: PluginInstallIn, db: Session = Depends(get_db)):
         )
     except ValueError as exc:
         raise HTTPException(409 if "已安装" in str(exc) else 422, str(exc))
+    from ..services import asset_sync
+    asset_sync.mark_synced("plugins", db)
     return to_dict(p)
 
 
@@ -369,6 +393,7 @@ class PluginLocalIn(BaseModel):
 @router.post("/plugins/install-local")
 def plugin_install_local(body: PluginLocalIn, db: Session = Depends(get_db)):
     """从本地目录安装插件（解析 bundle 清单）。"""
+    from ..services import asset_sync
     from ..services.plugin_service import install_from_manifest, parse_bundle_manifest, to_dict
 
     try:
@@ -376,14 +401,17 @@ def plugin_install_local(body: PluginLocalIn, db: Session = Depends(get_db)):
         p = install_from_manifest(db, manifest, source="local", source_url=body.directory)
     except (ValueError, OSError, json.JSONDecodeError) as exc:
         raise HTTPException(422, str(exc))
+    asset_sync.mark_synced("plugins", db)
     return to_dict(p)
 
 
 @router.get("/plugins/managed")
 def plugins_managed(db: Session = Depends(get_db)):
     """插件管理列表（含简介、来源、启停、可编辑标记）。"""
+    from ..services import asset_sync
     from ..services.plugin_service import to_dict
 
+    asset_sync.sync_plugins(db)
     return [to_dict(p) for p in db.query(Plugin).order_by(Plugin.builtin.desc(), Plugin.key).all()]
 
 
@@ -394,12 +422,15 @@ class PluginToggleIn(BaseModel):
 @router.put("/plugins/{key}/enabled")
 def plugin_toggle(key: str, body: PluginToggleIn, db: Session = Depends(get_db)):
     """启用/停用插件。"""
+    from ..services import asset_sync
     from ..services.plugin_service import set_enabled
 
     try:
-        return set_enabled(db, key, body.enabled)
+        res = set_enabled(db, key, body.enabled)
     except ValueError as exc:
         raise HTTPException(404, str(exc))
+    asset_sync.mark_synced("plugins", db)
+    return res
 
 
 class PluginUpdateIn(BaseModel):
@@ -413,13 +444,16 @@ class PluginUpdateIn(BaseModel):
 @router.put("/plugins/{key}")
 def plugin_update(key: str, body: PluginUpdateIn, db: Session = Depends(get_db)):
     """修改插件（所有插件均可修改）。"""
+    from ..services import asset_sync
     from ..services.plugin_service import update_plugin
 
     try:
-        return update_plugin(db, key, name=body.name, description=body.description,
-                             mechanism=body.mechanism, config=body.config, config_schema=body.config_schema)
+        res = update_plugin(db, key, name=body.name, description=body.description,
+                            mechanism=body.mechanism, config=body.config, config_schema=body.config_schema)
     except ValueError as exc:
         raise HTTPException(404, str(exc))
+    asset_sync.mark_synced("plugins", db)
+    return res
 
 
 @router.get("/plugins/behaviors")
@@ -433,11 +467,13 @@ def plugin_behaviors():
 @router.delete("/plugins/{key}")
 def plugin_uninstall(key: str, db: Session = Depends(get_db)):
     """卸载插件（所有插件均可删除）。"""
+    from ..services import asset_sync
     from ..services.plugin_service import uninstall_plugin
 
     ok = uninstall_plugin(db, key)
     if not ok:
         raise HTTPException(404, f"插件 '{key}' 不存在")
+    asset_sync.mark_synced("plugins", db)
     return {"ok": True, "key": key}
 
 
@@ -482,17 +518,20 @@ def create_agent_full(body: AgentCreateFull, db: Session = Depends(get_db)):
         )
     except agent_service.AssemblyValidationError as exc:
         raise HTTPException(422, {"rule": exc.rule, "message": exc.message})
+    from ..services import asset_sync
     from ..services.agent_store import save_agent_dir
 
     save_agent_dir(agent)  # 文件优先：落本地 agents/ 目录
     agent._warnings = warnings  # noqa: SLF001
     db.commit()
+    asset_sync.mark_synced("agents", db)
     return agent
 
 
 @router.put("/agents/{agent_id}")
 def update_agent_full(agent_id: str, body: AgentCreateFull, db: Session = Depends(get_db)):
     """重新组装 Agent：更新定义并同步到 agents/ 目录。"""
+    from ..services import asset_sync
     from ..services.agent_store import delete_agent_dir, save_agent_dir
 
     a = db.query(Agent).filter(Agent.id == agent_id).first()
@@ -511,12 +550,14 @@ def update_agent_full(agent_id: str, body: AgentCreateFull, db: Session = Depend
     save_agent_dir(a)
     audit(db, "agent.update", target=f"agent:{a.name}", detail={"fields": list(body.model_fields)})
     db.commit()
+    asset_sync.mark_synced("agents", db)
     return a
 
 
 @router.delete("/agents/{agent_id}")
 def delete_agent_full(agent_id: str, db: Session = Depends(get_db)):
     """删除 Agent：DB 索引 + agents/ 目录。"""
+    from ..services import asset_sync
     from ..services.agent_store import delete_agent_dir
 
     a = db.query(Agent).filter(Agent.id == agent_id).first()
@@ -527,6 +568,7 @@ def delete_agent_full(agent_id: str, db: Session = Depends(get_db)):
     delete_agent_dir(name)
     audit(db, "agent.delete", target=f"agent:{name}")
     db.commit()
+    asset_sync.mark_synced("agents", db)
     return {"ok": True, "name": name}
 
 
@@ -600,6 +642,8 @@ def create_team(body: TeamIn, db: Session = Depends(get_db)):
         db.flush()
         save_agent_dir(leader)
         auto_created = True
+        from ..services import asset_sync
+        asset_sync.mark_synced("agents", db)
 
     for m in body.members:
         if not db.query(Agent).filter(Agent.name == m).first():
@@ -672,11 +716,15 @@ def remove_team(name: str, db: Session = Depends(get_db)):
 
 @router.get("/agents", response_model=list[AgentOutFull])
 def list_agents_full(db: Session = Depends(get_db)):
+    from ..services import asset_sync
+    asset_sync.sync_agents(db)
     return db.query(Agent).order_by(Agent.created_at.desc()).all()
 
 
 @router.get("/agents/{agent_id}", response_model=AgentOutFull)
 def get_agent_full(agent_id: str, db: Session = Depends(get_db)):
+    from ..services import asset_sync
+    asset_sync.sync_agents(db)
     agent = db.query(Agent).filter(Agent.id == agent_id).order_by(Agent.version.desc()).first()
     if not agent:
         raise HTTPException(404, "Agent 不存在")
@@ -689,13 +737,18 @@ class ForkIn(BaseModel):
 
 @router.post("/agents/{agent_id}/fork", response_model=AgentOutFull)
 def fork_agent(agent_id: str, body: ForkIn, db: Session = Depends(get_db)):
+    from ..services import asset_sync
+    from ..services.agent_store import save_agent_dir
+
     source = db.query(Agent).filter(Agent.id == agent_id).order_by(Agent.version.desc()).first()
     if not source:
         raise HTTPException(404, "Agent 不存在")
     if db.query(Agent).filter(Agent.name == body.new_name).first():
         raise HTTPException(409, f"名称 '{body.new_name}' 已存在")
     forked = market_service.fork_agent(db, source, body.new_name)
+    save_agent_dir(forked)
     db.commit()
+    asset_sync.mark_synced("agents", db)
     return forked
 
 
@@ -723,9 +776,46 @@ def playground(agent_id: str, body: RunCreate, db: Session = Depends(get_db)):
     agent = db.query(Agent).filter(Agent.id == agent_id).order_by(Agent.version.desc()).first()
     if not agent:
         raise HTTPException(404, "Agent 不存在")
-    run = market_service.run_playground(db, agent, body.input)
+    run = market_service.run_playground(db, agent, body.input, history=body.history)
     db.commit()
     return run
+
+
+@router.post("/agents/{agent_id}/playground/stream")
+def playground_stream(agent_id: str, body: RunCreate, db: Session = Depends(get_db)):
+    """Playground 流式执行：实时推送 ReAct 循环的思考/工具/结果事件。"""
+    from fastapi.responses import StreamingResponse
+    from ..db import get_session_factory
+    from ..services.event_bridge import stream_callable
+
+    agent = db.query(Agent).filter(Agent.id == agent_id).order_by(Agent.version.desc()).first()
+    if not agent:
+        raise HTTPException(404, "Agent 不存在")
+    agent_snapshot = agent
+    text = body.input
+    history = body.history
+
+    def frame(obj: dict) -> str:
+        return f"data: {json.dumps(obj, ensure_ascii=False)}\n\n"
+
+    def work(emit):
+        bg = get_session_factory()()
+        try:
+            a = bg.query(Agent).filter(Agent.id == agent_id).order_by(Agent.version.desc()).first()
+            run = market_service.run_playground(bg, a, text, on_event=emit, history=history)
+            bg.commit()
+            emit({"type": "done", "status": run.status, "output": run.output_text,
+                  "steps": run.steps, "token_usage": run.token_usage})
+        except Exception as exc:
+            emit({"type": "error", "message": f"{type(exc).__name__}: {exc}"})
+        finally:
+            bg.close()
+
+    return StreamingResponse(
+        (frame(ev) for ev in stream_callable(work)),
+        media_type="text/event-stream",
+        headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
+    )
 
 
 @router.post("/agents/{agent_id}/runs", response_model=RunOut)
@@ -733,7 +823,7 @@ def create_run(agent_id: str, body: RunCreate, db: Session = Depends(get_db)):
     agent = db.query(Agent).filter(Agent.id == agent_id).order_by(Agent.version.desc()).first()
     if not agent or agent.status != "published":
         raise HTTPException(404, "Agent 不存在或未发布")
-    run = run_service.run_agent(db, agent, body.input, use_rag=body.use_rag)
+    run = run_service.run_agent(db, agent, body.input, use_rag=body.use_rag, history=body.history)
     db.commit()
     return run
 
@@ -785,6 +875,39 @@ def a2a_public_url():
         "hint": ("把 tasks_url 提供给外部系统作为本平台 Agent 的 A2A 端点；"
                  "未配置时在 .env 设置 AWS_A2A_PUBLIC_BASE_URL 为外部可访问地址（不要用 localhost）"),
     }
+
+
+@router.get("/.well-known/agent-card.json")
+def a2a_wellknown_card(db: Session = Depends(get_db)):
+    """A2A 标准发现端点（新版路径）：返回本平台主 Agent 的 Card。"""
+    return _build_wellknown_card(db, "")
+
+
+def _build_wellknown_card(db: Session, agent_name: str) -> dict:
+    from ..config import get_settings
+
+    settings = get_settings()
+    base = settings.a2a_public_base_url.rstrip("/") if settings.a2a_public_base_url else ""
+    if agent_name:
+        agent = (db.query(Agent).filter(Agent.name == agent_name, Agent.status == "published")
+                 .order_by(Agent.version.desc()).first())
+    else:
+        agent = (db.query(Agent).filter(Agent.status == "published")
+                 .order_by(Agent.is_orchestrator.desc(), Agent.created_at.asc()).first())
+    if not agent:
+        raise HTTPException(404, "无可发现的 Agent")
+    local = f"http://localhost:{os.environ.get('API_PORT', '8900')}"
+    card = a2a_service.agent_card(agent, base, local_url=local)
+    card["url"] = f"{base}/a2a/tasks" if base else f"{local}/a2a/tasks"
+    # 标准 A2A Card 的 skills 是对象数组
+    skills = []
+    for k in (agent.skill_keys or []):
+        sk = db.query(Skill).filter(Skill.name == k).first()
+        skills.append({"id": k, "name": k,
+                       "description": (sk.description if sk else ""),
+                       "tags": [sk.category] if sk else []})
+    card["skills"] = skills
+    return card
 
 
 @router.get("/a2a/cards/{agent_name}")
@@ -923,36 +1046,73 @@ def a2a_cancel(task_id: str, db: Session = Depends(get_db)):
 
 
 class PeerIn(BaseModel):
-    name: str
+    name: str = ""              # 可留空：自动发现时从 Agent Card 取
     base_url: str
-    description: str = ""      # 这个外部 Agent 能干什么
+    description: str = ""      # 这个外部 Agent 能干什么（发现失败时手填）
     category: str = ""          # 分类，留空则按 description 自动归类
     auth_type: str = "bearer"
     auth_token: str = ""
     direction: str = "outbound"
     data_policy: dict = Field(default_factory=dict)
     rate_limit_rpm: int = 60
+    auto_discover: bool = True  # 是否自动从 Agent Card 发现（默认开）
+
+
+class PeerDiscoverIn(BaseModel):
+    base_url: str
+    auth_token: str = ""
+    auth_type: str = "bearer"
+
+
+@router.post("/a2a/peers/discover")
+def discover_peer_card(body: PeerDiscoverIn):
+    """预览发现：从外部 Agent Card 自动读取名称/简介/技能（不落库）。"""
+    from ..services.a2a_card_client import discover_card
+
+    headers = {"Authorization": f"Bearer {body.auth_token}"} if (
+        body.auth_type == "bearer" and body.auth_token) else {}
+    return discover_card(body.base_url, headers=headers)
 
 
 @router.post("/a2a/peers")
 def create_peer(body: PeerIn, db: Session = Depends(get_db)):
     from ..services.skill_catalog import classify
+    from ..services.a2a_card_client import discover_card
 
-    if db.query(A2APeer).filter(A2APeer.name == body.name).first():
-        raise HTTPException(409, f"Peer '{body.name}' 已存在")
-    cat = (body.category or "").strip() or classify(f"{body.name} {body.description}")
+    name, desc, cat, skills, card_url, discovered = (
+        body.name, body.description, body.category, [], "", False)
+    # 自动发现：从 Agent Card 拉取能力信息（用户只需填 base_url）
+    if body.auto_discover:
+        headers = {"Authorization": f"Bearer {body.auth_token}"} if (
+            body.auth_type == "bearer" and body.auth_token) else {}
+        card = discover_card(body.base_url, headers=headers)
+        if card.get("ok"):
+            discovered = True
+            card_url = card.get("card_url", "")
+            name = name or card.get("name") or ""
+            desc = desc or card.get("description") or ""
+            skills = card.get("skills", [])
+            cat = cat or classify(f"{name} {desc} " + " ".join(s.get("name", "") for s in skills))
+    if not name:
+        raise HTTPException(422, "未能从 Agent Card 自动获取名称，请手动填写 name")
+    if db.query(A2APeer).filter(A2APeer.name == name).first():
+        raise HTTPException(409, f"Peer '{name}' 已存在")
+    cat = (cat or "").strip() or classify(f"{name} {desc}")
     peer = A2APeer(
-        id=new_id("peer"), name=body.name, base_url=body.base_url,
-        description=body.description, category=cat,
+        id=new_id("peer"), name=name, base_url=body.base_url,
+        description=desc, category=cat, skills=skills,
+        card_url=card_url, discovered=discovered,
         auth_type=body.auth_type, auth_token=body.auth_token, direction=body.direction,
         data_policy=body.data_policy, rate_limit_rpm=body.rate_limit_rpm,
     )
     db.add(peer)
-    audit(db, "peer.create", target=f"peer:{body.name}",
-          detail={"base_url": body.base_url, "direction": body.direction, "category": cat})
+    audit(db, "peer.create", target=f"peer:{name}",
+          detail={"base_url": body.base_url, "direction": body.direction,
+                  "discovered": discovered, "skills": len(skills)})
     db.flush()
     db.commit()
-    return {"id": peer.id, "name": peer.name, "category": peer.category}
+    return {"id": peer.id, "name": peer.name, "category": peer.category,
+            "discovered": discovered, "skill_count": len(skills)}
 
 
 @router.get("/a2a/peers")
@@ -962,9 +1122,36 @@ def list_peers(db: Session = Depends(get_db)):
         out.append({
             "id": p.id, "name": p.name, "base_url": p.base_url,
             "description": p.description, "category": p.category,
+            "skills": p.skills or [], "card_url": p.card_url,
+            "discovered": p.discovered,
             "direction": p.direction, "enabled": p.enabled,
         })
     return out
+
+
+@router.post("/a2a/peers/{peer_id}/refresh-card")
+def refresh_peer_card(peer_id: str, db: Session = Depends(get_db)):
+    """重新发现外部 Peer 的 Agent Card，更新能力信息。"""
+    from ..services.a2a_card_client import discover_card
+    from ..services.skill_catalog import classify
+
+    p = db.query(A2APeer).filter(A2APeer.id == peer_id).first()
+    if not p:
+        raise HTTPException(404, "Peer 不存在")
+    headers = {"Authorization": f"Bearer {p.auth_token}"} if (
+        p.auth_type == "bearer" and p.auth_token) else {}
+    card = discover_card(p.base_url, headers=headers)
+    if not card.get("ok"):
+        raise HTTPException(422, f"发现失败: {card.get('error')}")
+    p.description = card.get("description") or p.description
+    p.skills = card.get("skills", [])
+    p.card_url = card.get("card_url", "")
+    p.discovered = True
+    p.category = classify(f"{p.name} {p.description} " +
+                          " ".join(s.get("name", "") for s in p.skills))
+    db.commit()
+    return {"ok": True, "name": p.name, "description": p.description,
+            "skills": p.skills, "category": p.category}
 
 
 @router.delete("/a2a/peers/{peer_id}")
@@ -1296,7 +1483,13 @@ def orch_chat_stream(sid: str, body: DialogReplyIn, db: Session = Depends(get_db
                 queue.finish(sid, msg.id, "canceled" if state and state["canceled"] else "failed")
                 return
             try:
-                for ev in orchestrator_service.chat_stream(bg_db, bg_s, msg.text, msg.id, msg.cancel):
+                # event_sink：子 Agent 的实时事件直接写入 SSE 缓冲（委托在同步调用里产生）
+                def _sink(payload: dict):
+                    if payload.get("phase") == "sub":
+                        queue.append_event(msg.id, payload)
+                for ev in orchestrator_service.chat_stream(
+                    bg_db, bg_s, msg.text, msg.id, msg.cancel, event_sink=_sink
+                ):
                     # chat_stream yield 的是 SSE 帧字符串（data: ...），转成 dict 存入缓冲
                     try:
                         payload = json.loads(ev.replace("data: ", "", 1).strip())
@@ -1307,8 +1500,8 @@ def orch_chat_stream(sid: str, body: DialogReplyIn, db: Session = Depends(get_db
                 audit(bg_db, "orchestrator.turn", target=f"orch:{sid}", detail={"async": True, "msg": msg.id})
                 bg_db.commit()
             except Exception as exc:
-                queue.finish(sid, msg.id, "failed", str(exc))
                 queue.append_event(msg.id, {"type": "error", "message": str(exc), "message_id": msg.id})
+                queue.finish(sid, msg.id, "failed", str(exc))
         finally:
             bg_db.close()
 
@@ -1364,6 +1557,17 @@ def orch_message_status(mid: str):
     return status
 
 
+@router.get("/orchestrator/messages/{mid}/snapshot")
+def orch_message_snapshot(mid: str):
+    """返回单个后台任务的最新事件快照（供前端切回会话时无竞态重建进度）。"""
+    from ..services.chat_queue import queue
+
+    snap = queue.message_snapshot(mid)
+    if not snap:
+        raise HTTPException(404, "消息不存在")
+    return snap
+
+
 @router.post("/orchestrator/messages/{mid}/cancel")
 def orch_cancel_message(mid: str):
     """中断单条消息（排队中直接取消；执行中在下一个流式 chunk 停止）。"""
@@ -1401,8 +1605,9 @@ def orch_get(sid: str, db: Session = Depends(get_db)):
 
 @router.get("/orchestrator/agents")
 def orch_agents(db: Session = Depends(get_db)):
-    from ..services import orchestrator_service
+    from ..services import asset_sync, orchestrator_service
 
+    asset_sync.sync_agents(db)
     return orchestrator_service.list_orchestrators_for_ui(db)
 
 
@@ -1426,3 +1631,33 @@ def audit_events(limit: int = 50, db: Session = Depends(get_db)):
     rows = db.query(AuditEvent).order_by(AuditEvent.created_at.desc()).limit(min(limit, 200)).all()
     return [{"id": r.id, "action": r.action, "actor": r.actor, "target": r.target,
              "detail": r.detail, "created_at": str(r.created_at)} for r in rows]
+
+
+# ══ 交付文件：Skill 脚本生成的报告等产物 ══
+
+@router.get("/files/{run_key}")
+def list_files(run_key: str):
+    """列出某次运行生成的交付文件。"""
+    from ..services.artifact_files import list_run_files
+    return list_run_files(run_key)
+
+
+@router.get("/files/{run_key}/{filename}")
+def download_file(run_key: str, filename: str):
+    """下载交付文件（防路径穿越：仅允许 outputs/<run_key>/ 下的普通文件）。"""
+    from fastapi.responses import FileResponse
+    from ..services.artifact_files import run_output_dir
+
+    d = run_output_dir(run_key)
+    target = (d / filename).resolve()
+    if not str(target).startswith(str(d.resolve())) or not target.is_file():
+        raise HTTPException(404, "文件不存在")
+    suffix = target.suffix.lower()
+    media = {
+        ".docx": "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+        ".xlsx": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        ".pdf": "application/pdf",
+        ".json": "application/json",
+        ".txt": "text/plain",
+    }.get(suffix, "application/octet-stream")
+    return FileResponse(str(target), filename=target.name, media_type=media)

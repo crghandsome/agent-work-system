@@ -24,14 +24,103 @@ from .audit_service import record_usage
 from .model_gateway import ModelGateway
 
 
-def _apply_plugin(db, key: str, ctx) -> tuple[dict, bool]:
-    """执行插件：内置走 PLUGIN_REGISTRY，用户安装走配置驱动执行器。"""
+def _resolve_plugin_config(db, key: str, agent: Agent | None = None, slot: str | None = None) -> tuple[dict, bool]:
+    """解析插件最终配置（Plugin.config < agent.plugin_config[key] < agent.plugin_config[slot]）与启用状态。"""
+    from ..models import Plugin
+
+    row = db.query(Plugin).filter(Plugin.key == key).first() if db is not None else None
+    if row is not None and not row.enabled:
+        return {}, False
+    base_cfg = dict(row.config or {}) if row is not None else {}
+    ag_cfg = {}
+    if agent is not None and isinstance(agent.plugin_config, dict):
+        by_key = agent.plugin_config.get(key)
+        if isinstance(by_key, dict):
+            ag_cfg.update(by_key)
+        if slot and slot != key:
+            by_slot = agent.plugin_config.get(slot)
+            if isinstance(by_slot, dict):
+                ag_cfg.update(by_slot)
+    return {**base_cfg, **ag_cfg}, True
+
+
+def _apply_plugin(db, key: str, ctx, agent: Agent | None = None, *,
+                  slot: str | None = None, hook: str = "before_llm",
+                  hook_data: dict | None = None) -> tuple[dict, bool]:
+    """执行插件：先检查启用状态并合并配置；内置走 PLUGIN_REGISTRY，用户安装走配置驱动执行器。"""
+    cfg, enabled = _resolve_plugin_config(db, key, agent, slot=slot)
+    if not enabled:
+        return {"skipped": True, "reason": f"插件 {key} 已停用"}, key in PLUGIN_REGISTRY
     if key in PLUGIN_REGISTRY:
-        return PLUGIN_REGISTRY[key].apply(ctx, {}), True
+        if hook == "before_llm":
+            return PLUGIN_REGISTRY[key].apply(ctx, cfg), True
+        return {"skipped": True, "hook": hook}, True
     p = plugin_runner.resolve(db, key)
     if p:
-        return plugin_runner.execute(p, ctx, {}), False
+        return plugin_runner.execute(p, ctx, cfg, hook=hook, hook_data=hook_data), False
     return {"error": f"插件 {key} 不可用"}, False
+
+
+def run_lifecycle_hook(db, agent: Agent, ctx: PluginContext, hook: str,
+                       hook_data: dict | None = None) -> tuple[dict, list[dict]]:
+    """执行指定生命周期钩子（before_tool / after_tool / after_llm）。
+
+    返回 (merged_state, traces)：
+    - before_tool: merged_state 含 block, block_message, args
+    - after_tool : merged_state 含 block, block_message, observation
+    - after_llm  : merged_state 含 block, block_message, answer
+    """
+    state = dict(hook_data or {})
+    state.setdefault("block", False)
+    state.setdefault("block_message", "")
+    traces: list[dict] = []
+
+    for slot, key in (agent.plugin_keys or {}).items():
+        cfg, enabled = _resolve_plugin_config(db, key, agent, slot=slot)
+        if not enabled:
+            continue
+        # 1. 内置插件后置钩子（如 MemoryPlugin.after_run）
+        if key in PLUGIN_REGISTRY:
+            plugin_obj = PLUGIN_REGISTRY[key]
+            if hook == "after_llm" and hasattr(plugin_obj, "after_run"):
+                try:
+                    res = plugin_obj.after_run(ctx, str(state.get("answer") or ""), cfg)
+                    traces.append({"stage": hook, "plugin": key, "slot": slot, "result": res})
+                except Exception as exc:
+                    traces.append({"stage": hook, "plugin": key, "slot": slot, "error": str(exc)})
+            continue
+
+        # 2. 用户配置插件 / http_webhook / content_filter
+        if hook not in plugin_runner.configured_hooks(cfg):
+            continue
+        p = plugin_runner.resolve(db, key)
+        if not p:
+            continue
+        try:
+            res = plugin_runner.execute(p, ctx, cfg, hook=hook, hook_data=state)
+            if res.get("skipped"):
+                continue
+            traces.append({"stage": hook, "plugin": key, "slot": slot, "result": res})
+            if hook == "before_tool" and isinstance(res.get("args"), dict):
+                state["args"] = res["args"]
+            if hook == "after_tool" and isinstance(res.get("observation"), str):
+                state["observation"] = res["observation"]
+            if hook == "after_llm" and isinstance(res.get("answer"), str):
+                state["answer"] = res["answer"]
+            if res.get("block"):
+                state["block"] = True
+                state["block_message"] = str(res.get("block_message") or "请求已被安全插件拦截")
+                break
+        except Exception as exc:
+            traces.append({"stage": hook, "plugin": key, "slot": slot, "error": str(exc)})
+
+    return state, traces
+
+
+def run_after_hooks(db, agent: Agent, ctx: PluginContext, answer: str) -> list[dict]:
+    """兼容旧调用：执行 after_llm 钩子并返回轨迹列表。"""
+    _, traces = run_lifecycle_hook(db, agent, ctx, "after_llm", {"answer": answer})
+    return traces
 
 
 # 扩展点 → 自动执行的生命周期阶段（顺序即执行顺序）
@@ -84,7 +173,7 @@ def build_execution_plan(db: Session, agent: Agent) -> list[dict]:
     return plan
 
 
-def run_agent(db: Session, agent: Agent, input_text: str, use_rag: bool = True) -> AgentRun:
+def run_agent(db: Session, agent: Agent, input_text: str, use_rag: bool = True, on_event=None, history: list[dict] | None = None) -> AgentRun:
     run = AgentRun(id=new_id("run"), agent_id=agent.id, agent_version=agent.version, input_text=input_text)
     db.add(run)
     db.flush()
@@ -96,10 +185,11 @@ def run_agent(db: Session, agent: Agent, input_text: str, use_rag: bool = True) 
     if _pc.get("_agent_mode") != "legacy":
         from . import agent_loop
 
-        result = agent_loop.run_agent_loop(db, agent, input_text)
+        result = agent_loop.run_agent_loop(db, agent, input_text, on_event=on_event, history=history)
         run.output_text = result["answer"]
         run.status = result["status"]
         run.steps = result["steps"]
+        run.files = result.get("files", [])
         run.token_usage = {}
         run.finished_at = run.created_at
         db.flush()
@@ -120,14 +210,20 @@ def run_agent(db: Session, agent: Agent, input_text: str, use_rag: bool = True) 
             t0 = time.perf_counter()
 
             if stage == "intent" and key:
-                result, builtin = _apply_plugin(db, key, ctx)
+                result, builtin = _apply_plugin(db, key, ctx, agent=agent)
                 steps_trace.append({"step": "intent", "plugin": key, "builtin": builtin,
                                     "result": result, "ms": _ms(t0)})
 
             elif stage == "rag":
-                if use_rag or ctx.intent.get("intent") in ("search_knowledge",):
+                if getattr(ctx, "skip_rag", False):
+                    steps_trace.append({"step": "rag", "skipped": True,
+                                        "reason": f"intent={ctx.intent.get('intent', '')}", "ms": _ms(t0)})
+                elif use_rag or ctx.intent.get("intent") in ("search_knowledge",):
                     try:
-                        result = rag_service.search(query=input_text)
+                        search_kw = {"query": input_text}
+                        if getattr(ctx, "rag_top_k", None):
+                            search_kw["top_k"] = ctx.rag_top_k
+                        result = rag_service.search(**search_kw)
                         ctx.retrieved_chunks = result["hits"]
                         steps_trace.append({
                             "step": "rag", "hits": len(result["hits"]), "reranked": result["reranked"],
@@ -137,17 +233,17 @@ def run_agent(db: Session, agent: Agent, input_text: str, use_rag: bool = True) 
                         steps_trace.append({"step": "rag", "error": str(exc), "ms": _ms(t0)})
 
             elif stage == "compress" and key:
-                result, builtin = _apply_plugin(db, key, ctx)
+                result, builtin = _apply_plugin(db, key, ctx, agent=agent)
                 steps_trace.append({"step": "compress", "plugin": key, "builtin": builtin,
                                     "result": result, "ms": _ms(t0)})
 
             elif stage == "memory" and key:
-                result, builtin = _apply_plugin(db, key, ctx)
+                result, builtin = _apply_plugin(db, key, ctx, agent=agent)
                 steps_trace.append({"step": "memory", "plugin": key, "builtin": builtin,
                                     "result": result, "ms": _ms(t0)})
 
             elif stage == "workflow_node" and key:
-                result, builtin = _apply_plugin(db, key, ctx)
+                result, builtin = _apply_plugin(db, key, ctx, agent=agent)
                 steps_trace.append({"step": "plugin", "plugin": key, "slot": item.get("slot", ""),
                                     "builtin": builtin, "result": result, "ms": _ms(t0)})
 
@@ -162,6 +258,9 @@ def run_agent(db: Session, agent: Agent, input_text: str, use_rag: bool = True) 
                 usage_total["output_tokens"] += usage.get("output_tokens", 0)
                 steps_trace.append({"step": "llm", "model": used, "ms": _ms(t0)})
                 run.output_text = reply
+                for ah in run_after_hooks(db, agent, ctx, reply):
+                    steps_trace.append({"step": ah["stage"], "plugin": ah["plugin"],
+                                        "result": ah.get("result") or ah.get("error"), "ms": 0})
 
         run.status = "succeeded"
     except Exception as exc:

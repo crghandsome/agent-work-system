@@ -15,6 +15,7 @@ handler 签名：(db, agent, **kwargs) -> str
 """
 from __future__ import annotations
 
+import os
 import subprocess
 from pathlib import Path
 from typing import Callable
@@ -22,6 +23,18 @@ from typing import Callable
 from sqlalchemy.orm import Session
 
 TOOLS: dict[str, dict] = {}
+
+# 最近一次 skill_script 使用的 run_key（线程局部，供 SSE 层发 file 事件）
+import threading
+_ctx = threading.local()
+
+
+def _set_last_run_key(key: str) -> None:
+    _ctx.last_run_key = key
+
+
+def get_last_run_key() -> str:
+    return getattr(_ctx, "last_run_key", "")
 
 
 def register_tool(name: str, description: str, parameters: dict,
@@ -63,29 +76,82 @@ def _knowledge_search(db, agent, query: str, top_k: int = 5) -> str:
     return "\n---\n".join(f"[{h['title']}] {h['text'][:600]}" for h in r["hits"])
 
 
-def _skill_script(db, agent, skill_name: str, script: str, args: str = "") -> str:
-    """执行 Skill 包内脚本（受限 Python）。"""
+def _skill_script(db, agent, skill_name: str, script: str, args: str = "", run_key: str = "") -> str:
+    """执行 Skill 包内脚本，产物落 outputs/<run_key>/，返回文本含 [交付文件] 标记。
+
+    兼容多层目录；参数用 shlex 正确拆分；若脚本支持 --out/--json 且用户未指定，
+    自动指向运行目录，确保生成文件可被交付。
+    """
+    import shlex
+    import time
     from .artifact_store import skill_dir
+    from .artifact_files import run_output_dir, list_run_files
+
+    # 未指定 run_key 时自动生成隔离目录（每次调用独立，避免覆盖）
+    if not run_key:
+        run_key = f"run-{int(time.time()*1000)}"
+        # 让调用方（SSE）能拿到本次 key：写进线程局部变量
+        _set_last_run_key(run_key)
 
     d = skill_dir(skill_name)
     if not d.exists():
         return f"Skill '{skill_name}' 不存在"
-    target = (d / "scripts" / script).resolve()
-    # 防路径穿越：必须落在 skill 的 scripts/ 目录内
-    if not str(target).startswith(str((d / "scripts").resolve())) or not target.is_file():
-        return f"脚本不存在或路径非法: {script}"
+    # 脚本名容错：LLM 常传 "scripts/build_daily_report.py" 或 "./scripts/x.py"
+    bare = script.replace("\\", "/").split("/")[-1]
+    scripts_dirs = [d / "scripts"] + [p / "scripts" for p in d.iterdir() if p.is_dir()]
+    scripts_root = next((s for s in scripts_dirs if s.is_dir() and (s / bare).is_file()), None)
+    if not scripts_root:
+        return f"脚本不存在: {script}（已查 {[str(s) for s in scripts_dirs]}）"
+    target = (scripts_root / bare).resolve()
+    if not str(target).startswith(str(scripts_root.resolve())):
+        return f"脚本路径非法: {script}"
     if target.suffix != ".py":
         return "仅支持执行 .py 脚本"
+
+    out_dir = run_output_dir(run_key)
+    try:
+        tokens = shlex.split(args or "")
+    except ValueError:
+        tokens = (args or "").split()
+    # 强制把 --out/--json 指向隔离目录：LLM 常自带绝对路径（如 /srv/data/artifacts/日报.docx），
+    # 那样文件落在 outputs/ 之外，交付标记就检测不到。这里一律覆盖为用户可下载目录。
+    def _force(flag, default_name):
+        val = str(out_dir / default_name)
+        if flag in tokens:
+            i = tokens.index(flag)
+            if i + 1 < len(tokens):
+                tokens[i + 1] = val
+            else:
+                tokens.insert(i + 1, val)
+        else:
+            tokens.extend([flag, val])
+    _force("--out", f"{skill_name}_result.docx")
+    _force("--json", f"{skill_name}_data.json")
+
+    env = {**os.environ}
+    env.setdefault("QXB_CACHE_BACKEND", "mysql")
+    for k in ("DSH_HOME", "AWS_MCP_CONFIG", "ANTHROPIC_BASE_URL"):
+        if k in env:
+            env[k] = env[k]
     try:
         proc = subprocess.run(
-            ["python", str(target), args], cwd=str(d),
-            capture_output=True, text=True, timeout=15,
+            ["python", str(target), *tokens], cwd=str(target.parent),
+            capture_output=True, text=True, timeout=600, env=env,
         )
         out = (proc.stdout or "").strip()
         err = (proc.stderr or "").strip()
-        return (out or "(无输出)") + (f"\n[stderr] {err[:500]}" if err else "")
+        text = (out or "(无输出)") + (f"\n[stderr] {err[:1500]}" if err else "")
     except subprocess.TimeoutExpired:
-        return "脚本执行超时（15秒）"
+        return "脚本执行超时（600秒）"
+
+    # 交付文件标记：SSE 层解析后发 file 事件，前端显示下载卡片
+    files = list_run_files(run_key)
+    delivered = [f for f in files if not f["name"].startswith(".")]
+    if delivered:
+        text += "\n" + "\n".join(
+            f"[交付文件] {f['name']}|{f['download_url']}|{f['size']}" for f in delivered
+        )
+    return text
 
 
 def _a2a_delegate(db, agent, agent_name: str, message: str) -> str:
@@ -113,10 +179,19 @@ def _plugin_action(db, agent, plugin_key: str, action: str = "info") -> str:
     return f"未知操作: {action}"
 
 
+_BUILTINS_REGISTERED = False
+
+
 def init_builtin_tools() -> None:
-    """注册内置工具（幂等）。"""
-    if TOOLS:
+    """注册内置工具（幂等）。
+
+    注意：不能用 `if TOOLS: return` 判断——启动时 MCP 工具已注册进 TOOLS，
+    那样会导致内置工具（skill_script 等）永远注册不上。用独立标志位。
+    """
+    global _BUILTINS_REGISTERED
+    if _BUILTINS_REGISTERED:
         return
+    _BUILTINS_REGISTERED = True
     register_tool(
         "knowledge_search", "检索知识库，返回与查询相关的文档片段",
         {"type": "object", "properties": {
@@ -126,11 +201,14 @@ def init_builtin_tools() -> None:
         _knowledge_search,
     )
     register_tool(
-        "skill_script", "执行某个 Skill 包 scripts/ 目录下的 Python 脚本",
+        "skill_script",
+        "执行某个 Skill 包 scripts/ 目录下的 Python 脚本，可生成docx/xlsx/pdf等文件并交付给用户下载。"
+        "用户要求生成报告/文档/表格时必须用此工具执行对应 Skill 的脚本；"
+        "脚本会自动把产物保存到隔离目录，返回值含[交付文件]标记，前端会显示可点击下载卡片。",
         {"type": "object", "properties": {
             "skill_name": {"type": "string", "description": "Skill 名称"},
             "script": {"type": "string", "description": "脚本文件名（含 .py）"},
-            "args": {"type": "string", "description": "命令行参数", "default": ""}},
+            "args": {"type": "string", "description": "命令行参数字符串，如 --date 20261104；输出路径会自动指定，无需手写"}},
          "required": ["skill_name", "script"]},
         _skill_script,
     )

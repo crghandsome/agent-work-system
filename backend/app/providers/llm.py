@@ -78,7 +78,8 @@ def stream_llm(base_url: str, token: str, model: str, system: str, messages: lis
     """
     headers = {"Authorization": f"Bearer {token}", "content-type": "application/json"}
     payload = {
-        "model": model, "max_tokens": 2048, "stream": True, "stream_options": {"include_usage": True},
+        "model": model, "max_tokens": get_settings().llm_max_tokens,
+        "stream": True, "stream_options": {"include_usage": True},
         "messages": ([{"role": "system", "content": system}] if system else []) + messages,
     }
     state = {"in_think": False, "carry": ""}
@@ -139,7 +140,7 @@ class OpenAICompatLLM(LLMProvider):
         headers = {"Authorization": f"Bearer {self.token}", "content-type": "application/json"}
         payload = {
             "model": self.model,
-            "max_tokens": 2048,
+            "max_tokens": get_settings().llm_max_tokens,
             "messages": ([{"role": "system", "content": system}] if system else []) + messages,
         }
         with httpx.Client(timeout=120) as client:

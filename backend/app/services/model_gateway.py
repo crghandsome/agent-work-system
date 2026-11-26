@@ -10,10 +10,10 @@ from .audit_service import record_usage
 
 # 平台模型目录：id → 形态（网关为 OpenAI 兼容；fallback 链按序尝试，全部失败才降级 mock）
 MODEL_CATALOG: dict[str, str] = {
-    "MiniMax-M2.5": "openai",
-    "MiniMax-M2.5-highspeed": "openai",
-    "MiniMax-M2.7": "openai",
+    "MiniMax-M3.1-Flash": "openai",
     "MiniMax-M3": "openai",
+    "MiniMax-M2.7": "openai",
+    "MiniMax-M2.5": "openai",
 }
 
 

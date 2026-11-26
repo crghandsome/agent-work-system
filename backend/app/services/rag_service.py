@@ -52,12 +52,13 @@ def reindex_all_documents(db: Session) -> int:
     s = get_settings()
     ensure_collection()
     client = get_qdrant()
+    default_cfg = {"chunk_size": 500, "overlap": 50}
     docs = db.query(Document).all()
     total = 0
     for doc in docs:
         genre = doc.genre or "custom"
         blocks = chunking_service.chunk_document(doc.content, genre,
-                                                 {"chunk_size": 500, "overlap": 50},
+                                                 default_cfg,
                                                  doc_title=doc.title)
         if not blocks:
             continue
